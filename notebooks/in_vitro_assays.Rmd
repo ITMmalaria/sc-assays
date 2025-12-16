@@ -1,0 +1,1687 @@
+---
+title: "Sexual conversion rate - in vitro assays"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_depth: 5
+    toc_float:
+      collapsed: FALSE
+    number_sections: TRUE
+    code_folding: show
+---
+
+```{r results='hide', message=FALSE, collapse=TRUE, class.source = 'fold-hide'}
+# load required libraries
+library("lme4")
+library("ggplot2")
+library("here")
+library("tidyverse")
+library("emmeans")
+library("brms")
+library("DHARMa")
+library("glmmTMB")
+library("performance")
+library("scales")
+library("grateful")
+```
+
+# Exploration and visualisation
+
+A pseudonymized/codified dataset was used as a precaution due to ethical considerations (patient-level clinical data). The full dataset is available upon request (see manuscript data availability statement). For the in vitro assays specifically, age and demographic location variables have been removed, in addition to codifying the levels of the variables not of direct interest.
+
+```{r}
+# load the data
+df <- read_csv(here("./data/ivSCAs_codified.csv"), show_col_types = FALSE) %>%
+  rename(HBB.genotype = `HBB Genotype`) %>% 
+  rename(Sample.type = `Sample type`) %>% 
+  select(ID, Group, Sample.type, HBB.genotype, Bloodgroup, Reticulocytes, Gender, Symptomatic,
+         # Age, # omitted due to data sensitivity
+         # Village, Ethnicity, # omitted due to data sensitivity + missing values
+         `Raw counts_iRBCs_CHOLINE_Gen1_35to40hpi`,
+         `Raw counts_Asexual iRBCs_CHOLINE_Gen1_35to40hpi`,
+         `Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi`,
+         `Raw counts_Retics_Reticulocytes`, 
+         `Raw counts_Retics_total RBCs`,
+         SCR_CHOLINE_Gen1_35to40hpi, # keep SCR for plots
+         # no choline models
+         `Raw counts_iRBCs_NO CHOLINE_Gen1_25to30hpi`,
+         `Raw counts_Asexual iRBCs_NO CHOLINE_Gen1_35to40hpi`,
+         `Raw counts_Sexual iRBCs_NO CHOLINE_Gen1_35to40hpi`,
+         # different timepoints
+         `Raw counts_iRBCs_CHOLINE_Gen1_25to30hpi`,
+         `Raw counts_Asexual iRBCs_CHOLINE_Gen1_25to30hpi`,
+         `Raw counts_Sexual iRBCs_CHOLINE_Gen1_25to30hpi`,
+         `Raw counts_iRBCs_NO CHOLINE_Gen1_25to30hpi`,
+         `Raw counts_Asexual iRBCs_NO CHOLINE_Gen1_25to30hpi`,
+         `Raw counts_Sexual iRBCs_NO CHOLINE_Gen1_25to30hpi`,
+         # late stage
+         `Raw counts_iRBCs_CHOLINE_Gen0_35to40hpi`,
+         `Raw counts_Late stages_CHOLINE_Gen0_35to40hpi`,
+         `Raw counts_Late stages_CHOLINE_Gen1_25to30hpi`,
+         `Raw counts_Late stages_CHOLINE_Gen1_35to40hpi`,
+         # parasitemia
+         `Raw counts_RBC_CHOLINE_Gen0_0to5hpi`,
+         `Raw counts_iRBCs_CHOLINE_Gen0_0to5hpi`,
+         # reticulocytes
+         `Raw counts_Retics_Reticulocytes`,
+         `Raw counts_Retics_total RBCs`,
+         ) %>% 
+  mutate(HBB.genotype = case_when(
+    HBB.genotype == 0 ~ "HbAA",
+    HBB.genotype == 1 ~ "HbAC",
+    HBB.genotype == 2 ~ "HbAS",
+    HBB.genotype == 3 ~ "HbSS",
+    HBB.genotype == 4 ~ "HbSC",
+  )) %>%
+  filter(!Group == "AA CTRL") %>% 
+  filter_all(any_vars(!is.na(.))) %>% # remove empty lines/samples
+  mutate(across(c(ID, Group, Sample.type, HBB.genotype, Bloodgroup, Gender, 
+                  Symptomatic), as.factor)) %>% 
+  mutate(HBB.genotype = fct_relevel(HBB.genotype, "HbAA")) %>%  # set HbAA as baseline reference
+  mutate(Group = fct_relevel(Group, "AA")) %>%  # set HbAA as baseline reference
+  mutate()
+```
+
+```{r}
+str(df)
+summary(df)
+```
+
+```{r}
+ggplot(df, aes(x = Group, y = SCR_CHOLINE_Gen1_35to40hpi)) +
+  geom_boxplot(aes(fill = Group), outlier.size = 2, outlier.colour = "grey", 
+               width = 0.8, position = position_dodge(width = 0.8)) +  # Reduce space between boxplots
+  geom_point(aes(fill = Group), alpha = 0.8, shape = 21, colour= "#115e67a6",
+             position = position_jitter(width = 0.1, height = 0.1)) +  # Bubble plot
+  scale_fill_manual(values = c("AA CTRL" ="paleturquoise","AA" ="paleturquoise", 
+                               "AC" = "palegreen", 
+                               "AS" = "thistle",
+                               "SC" = "lightpink1",
+                               "SS"= "peachpuff")) +  # Custom color for bubbles and boxplots
+  theme_minimal() +  # Clean theme
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 14),  # Increase font size for x-axis ticks
+    axis.text.y = element_text(size = 14),  # Increase font size for y-axis ticks
+    axis.title.x = element_text(size = 16),  # Increase font size for x-axis title
+    axis.title.y = element_text(size = 16),  # Increase font size for y-axis title
+    strip.text = element_text(size = 12),
+    panel.grid.major = element_blank(),   # Remove major gridlines
+    panel.grid.minor = element_blank(),   # Remove minor gridlines
+    axis.line = element_line(color = "black")  # Add black axis lines
+  ) +
+  coord_cartesian(ylim = c(0, 50))  # Set y-axis limit from 0 to 50
+```
+
+# Final models
+
+## SCR vs genotype - Choline Gen1 35-40 hpi
+
+The data was modelled using generalized linear model using the beta-binomial family and a single dispersion parameter to account for overdispersion.
+
+$$SCR \sim HBB.genotype$$
+
+This model was chosen to keep things interpretable, and take into account the fact that some variables are not covered by a lot of samples (e.g. sparse/uneven representation across levels of blood group). Additionally, since most estimates remain consistent in directionality and magnitude and LRTs tend to favour the simple model, we opt for this parsimonious model. 
+
+Although this approach cannot fully exclude confounding or interaction effects, the direction and magnitude of estimated effects were broadly consistent across alternative model specifications (with only the ivSCA test of SCR (+Choline, Gen1 35-40hpi) exhibiting unstable p-values on the border of our chosen significance level). However, because of this, sample size and power limitations should still be kept in mind when interpreting some of these GL(M)M results, with emphasis on effect sizes rather than exact p-values. 
+
+See the [model comparison section](#model-comparison) for more details.
+
+```{r}
+model <- glmmTMB(
+  cbind(`Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi`,
+        `Raw counts_Asexual iRBCs_CHOLINE_Gen1_35to40hpi`) ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+summary(model)
+```
+
+Model assumptions are OK:
+
+```{r}
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+The estimated odds ratios (using Wald Z-tests) for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+The above table not only shows the estimated odds ratio and its corresponding p-value, but also the confidence interval of this odds ratio (= `asymp.LCL` and `asymp.UCL`).
+
+These p-values are adjusted for multiple testing using the Bonferroni method. 
+
+The estimates are already transformed from the log-scale, so they can be directly interpreted as odds ratios (OR).
+
+The estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+### Bayesian estimates
+
+As a more conservative estimate, we can use a Bayesian approach while fitting a beta-binomial generalized linear model. The estimated credible intervals for the SRC and odds ratios between genotypes should be less overly optimistic (more conservative).
+
+```{r cache=TRUE, collapse=TRUE, class.source = 'fold-hide'}
+df <- df %>% 
+  mutate(sexual = `Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi`) %>% 
+  mutate(asexual = `Raw counts_Asexual iRBCs_CHOLINE_Gen1_35to40hpi`) %>% 
+  mutate(total = `Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi` + `Raw counts_Asexual iRBCs_CHOLINE_Gen1_35to40hpi`)
+
+brm_model <- brm(
+  bf(
+    sexual | trials(total) ~ HBB.genotype
+  ),
+  family = beta_binomial(link = "logit"),
+  data = df,
+  iter = 5000,
+  chains = 8,
+  seed = 42,
+  cores = 8
+)
+```
+
+```{r}
+summary(brm_model)
+```
+
+```{r}
+plot(brm_model)
+```
+
+The Bayesian estimated odds ratios for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(brm_model, ~ HBB.genotype)
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+The Bayesian estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+### Non-parametric Kruskal-Wallis and Wilcoxon rank-sum alternative
+
+Overall effect of genotype is significant. However, the pairwise effects appear to be borderline; some p-values become non-significant when correcting for all pairwises comparisons.
+
+```{r}
+kruskal.test(df$`Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi` / 
+               (df$`Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi` + df$`Raw counts_Asexual iRBCs_CHOLINE_Gen1_35to40hpi`) ~ 
+               df$HBB.genotype)
+
+pairwise.wilcox.test(df$`Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi` / 
+               (df$`Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi` + df$`Raw counts_Asexual iRBCs_CHOLINE_Gen1_35to40hpi`),
+               df$HBB.genotype,
+               p.adjust.method = "holm")
+
+pairwise.wilcox.test(df$`Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi` / 
+               (df$`Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi` + df$`Raw counts_Asexual iRBCs_CHOLINE_Gen1_35to40hpi`),
+               df$HBB.genotype,
+               p.adjust.method = "bonferroni")
+```
+
+## SCR vs genotype - Choline Gen1 25-30 hpi
+
+```{r}
+model <- glmmTMB(
+  cbind(`Raw counts_Sexual iRBCs_CHOLINE_Gen1_25to30hpi`,
+        `Raw counts_Asexual iRBCs_CHOLINE_Gen1_25to30hpi`) ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+summary(model)
+```
+
+Model assumptions shows slight deviation for residual vs predicted plots. Adding bloodgroup fixes this, but warns about a potential outlier (see below).
+
+```{r}
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+The estimated odds ratios (using Wald Z-tests) for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+The estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+### Adding bloodgroup to see if this fixes model assumptions
+
+```{r}
+model <- glmmTMB(
+  cbind(`Raw counts_Sexual iRBCs_CHOLINE_Gen1_25to30hpi`,
+        `Raw counts_Asexual iRBCs_CHOLINE_Gen1_25to30hpi`) ~ HBB.genotype + Bloodgroup,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+summary(model)
+```
+
+Model assumptions shows slight deviation for residual vs predicted plots. Adding bloodgroup fixes this, but warns about a single potential outlier (see below).
+
+```{r}
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+The estimated odds ratios (using Wald Z-tests) for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+The estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+### Non-parametric Kruskal-Wallis and Wilcoxon rank-sum alternative
+
+```{r}
+kruskal.test(df$`Raw counts_Sexual iRBCs_CHOLINE_Gen1_25to30hpi` / 
+               (df$`Raw counts_Sexual iRBCs_CHOLINE_Gen1_25to30hpi` + df$`Raw counts_Asexual iRBCs_CHOLINE_Gen1_25to30hpi`) ~ 
+               df$HBB.genotype)
+
+pairwise.wilcox.test(df$`Raw counts_Sexual iRBCs_CHOLINE_Gen1_25to30hpi` / 
+               (df$`Raw counts_Sexual iRBCs_CHOLINE_Gen1_25to30hpi` + df$`Raw counts_Asexual iRBCs_CHOLINE_Gen1_25to30hpi`),
+               df$HBB.genotype,
+               p.adjust.method = "holm")
+
+pairwise.wilcox.test(df$`Raw counts_Sexual iRBCs_CHOLINE_Gen1_25to30hpi` / 
+               (df$`Raw counts_Sexual iRBCs_CHOLINE_Gen1_25to30hpi` + df$`Raw counts_Asexual iRBCs_CHOLINE_Gen1_25to30hpi`),
+               df$HBB.genotype,
+               p.adjust.method = "bonferroni")
+```
+
+## SCR vs genotype - No choline Gen1 35-40 hpi
+
+```{r}
+model <- glmmTMB(
+  cbind(`Raw counts_Sexual iRBCs_NO CHOLINE_Gen1_35to40hpi`,
+        `Raw counts_Asexual iRBCs_NO CHOLINE_Gen1_35to40hpi`) ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+summary(model)
+```
+
+Model assumptions are OK.
+
+```{r}
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+The estimated odds ratios (using Wald Z-tests) for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+The estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+### Bayesian estimates
+
+As a more conservative estimate, we can use a Bayesian approach while fitting a beta-binomial generalized linear model. The estimated credible intervals for the SRC and odds ratios between genotypes should be less overly optimistic (more conservative).
+
+```{r cache=TRUE, collapse=TRUE, class.source = 'fold-hide'}
+df <- df %>% 
+  mutate(sexual = `Raw counts_Sexual iRBCs_NO CHOLINE_Gen1_35to40hpi`) %>% 
+  mutate(asexual = `Raw counts_Asexual iRBCs_NO CHOLINE_Gen1_35to40hpi`) %>% 
+  mutate(total = `Raw counts_Sexual iRBCs_NO CHOLINE_Gen1_35to40hpi` + `Raw counts_Asexual iRBCs_NO CHOLINE_Gen1_35to40hpi`)
+
+brm_model <- brm(
+  bf(
+    sexual | trials(total) ~ HBB.genotype
+  ),
+  family = beta_binomial(link = "logit"),
+  data = df,
+  iter = 5000,
+  chains = 8,
+  seed = 42,
+  cores = 8
+)
+```
+
+```{r}
+summary(brm_model)
+```
+
+```{r}
+plot(brm_model)
+```
+
+The Bayesian estimated odds ratios for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(brm_model, ~ HBB.genotype)
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+The Bayesian estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+## SCR vs genotype - No choline Gen1 25-30 hpi
+
+```{r}
+model <- glmmTMB(
+  cbind(`Raw counts_Sexual iRBCs_NO CHOLINE_Gen1_25to30hpi`,
+        `Raw counts_Asexual iRBCs_NO CHOLINE_Gen1_25to30hpi`) ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+summary(model)
+```
+
+Model assumptions are OK.
+
+```{r}
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+The estimated odds ratios (using Wald Z-tests) for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+The estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+### Bayesian estimates
+
+As a more conservative estimate, we can use a Bayesian approach while fitting a beta-binomial generalized linear model. The estimated credible intervals for the SRC and odds ratios between genotypes should be less overly optimistic (more conservative).
+
+```{r cache=TRUE, collapse=TRUE, class.source = 'fold-hide'}
+df <- df %>% 
+  mutate(sexual = `Raw counts_Sexual iRBCs_NO CHOLINE_Gen1_25to30hpi`) %>% 
+  mutate(asexual = `Raw counts_Asexual iRBCs_NO CHOLINE_Gen1_25to30hpi`) %>% 
+  mutate(total = `Raw counts_Sexual iRBCs_NO CHOLINE_Gen1_25to30hpi` + `Raw counts_Asexual iRBCs_NO CHOLINE_Gen1_25to30hpi`)
+
+brm_model <- brm(
+  bf(
+    sexual | trials(total) ~ HBB.genotype
+  ),
+  family = beta_binomial(link = "logit"),
+  data = df,
+  iter = 5000,
+  chains = 8,
+  seed = 42,
+  cores = 8
+)
+```
+
+```{r}
+summary(brm_model)
+```
+
+```{r}
+plot(brm_model)
+```
+
+The Bayesian estimated odds ratios for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(brm_model, ~ HBB.genotype)
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+The Bayesian estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+## Late stage proportions at different timepoints
+
+Note: there are a number of missing values for some of the raw iRBC counts at gen 0 and the raw late stages at gen 0.
+
+### Gen0_35to40hpi
+
+```{r}
+model <- glmmTMB(
+  cbind(`Raw counts_Late stages_CHOLINE_Gen0_35to40hpi`,
+        `Raw counts_iRBCs_CHOLINE_Gen0_35to40hpi` - `Raw counts_Late stages_CHOLINE_Gen0_35to40hpi`) ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+summary(model)
+```
+
+Model assumptions are not OK...
+
+```{r}
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+# plotResiduals(sim_res, df$HBB.genotype)
+```
+
+The estimated odds ratios (using Wald Z-tests) for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+The estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+#### Kruskal-Wallis alternative
+
+```{r}
+kruskal.test(df$`Raw counts_Late stages_CHOLINE_Gen0_35to40hpi` / 
+               df$`Raw counts_iRBCs_CHOLINE_Gen0_35to40hpi` ~ 
+               df$HBB.genotype)
+
+pairwise.wilcox.test(df$`Raw counts_Late stages_CHOLINE_Gen0_35to40hpi` / 
+               df$`Raw counts_iRBCs_CHOLINE_Gen0_35to40hpi`,
+               df$HBB.genotype,
+               p.adjust.method = "holm")
+
+pairwise.wilcox.test(df$`Raw counts_Late stages_CHOLINE_Gen0_35to40hpi` / 
+               df$`Raw counts_iRBCs_CHOLINE_Gen0_35to40hpi`,
+               df$HBB.genotype,
+               p.adjust.method = "bonferroni")
+```
+
+### Gen1_25to30hpi
+
+```{r}
+model <- glmmTMB(
+  cbind(`Raw counts_Late stages_CHOLINE_Gen1_25to30hpi`,
+        `Raw counts_iRBCs_CHOLINE_Gen1_25to30hpi` - `Raw counts_Late stages_CHOLINE_Gen1_25to30hpi`) ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+summary(model)
+```
+
+Model assumptions show slight deviations for quantiles.
+
+```{r}
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+The estimated odds ratios (using Wald Z-tests) for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+The estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+#### Kruskal-Wallis alternative
+
+```{r}
+kruskal.test(df$`Raw counts_Late stages_CHOLINE_Gen1_25to30hpi` / 
+               df$`Raw counts_iRBCs_CHOLINE_Gen1_25to30hpi` ~ 
+               df$HBB.genotype)
+
+pairwise.wilcox.test(df$`Raw counts_Late stages_CHOLINE_Gen1_25to30hpi` / 
+               df$`Raw counts_iRBCs_CHOLINE_Gen1_25to30hpi`,
+               df$HBB.genotype,
+               p.adjust.method = "holm")
+
+pairwise.wilcox.test(df$`Raw counts_Late stages_CHOLINE_Gen1_25to30hpi` / 
+               df$`Raw counts_iRBCs_CHOLINE_Gen1_25to30hpi`,
+               df$HBB.genotype,
+               p.adjust.method = "bonferroni")
+```
+
+### Gen1_35to40hpi
+
+```{r}
+model <- glmmTMB(
+  cbind(`Raw counts_Late stages_CHOLINE_Gen1_35to40hpi`,
+        `Raw counts_iRBCs_CHOLINE_Gen1_35to40hpi` - `Raw counts_Late stages_CHOLINE_Gen1_35to40hpi`) ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+summary(model)
+```
+
+Model assumptions are OK.
+
+```{r}
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+The estimated odds ratios (using Wald Z-tests) for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+The estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+#### Bayesian estimates
+
+As a more conservative estimate, we can use a Bayesian approach while fitting a beta-binomial generalized linear model. The estimated credible intervals for the SRC and odds ratios between genotypes should be less overly optimistic (more conservative).
+
+```{r cache=TRUE, collapse=TRUE, class.source = 'fold-hide'}
+df <- df %>% 
+  mutate(late = `Raw counts_Late stages_CHOLINE_Gen1_35to40hpi`) %>% 
+  mutate(total = `Raw counts_iRBCs_CHOLINE_Gen1_35to40hpi`)
+
+brm_model <- brm(
+  bf(
+    late | trials(total) ~ HBB.genotype
+  ),
+  family = beta_binomial(link = "logit"),
+  data = df,
+  iter = 5000,
+  chains = 8,
+  seed = 42,
+  cores = 8
+)
+```
+
+```{r}
+summary(brm_model)
+```
+
+```{r}
+plot(brm_model)
+```
+
+The Bayesian estimated odds ratios for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(brm_model, ~ HBB.genotype)
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+The Bayesian estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+## Parasitemia vs genotype
+
+**There does not appear to be a strong relationship between parasitemia and genotypes.**
+
+A quick test (not included) showed that a normal binomial model is a poor fit for the data, so we opt for the beta-binomial one immediately.
+
+```{r}
+model <- glmmTMB(
+  cbind(`Raw counts_iRBCs_CHOLINE_Gen0_0to5hpi`,
+        `Raw counts_RBC_CHOLINE_Gen0_0to5hpi` - `Raw counts_iRBCs_CHOLINE_Gen0_0to5hpi`) ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+summary(model)
+```
+
+Model assumptions are OK.
+
+```{r}
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+The estimated odds ratios (using Wald Z-tests) for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+The estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+#### Bayesian estimates
+
+As a more conservative estimate, we can use a Bayesian approach while fitting a beta-binomial generalized linear model. The estimated credible intervals for the SRC and odds ratios between genotypes should be less overly optimistic (more conservative).
+
+**There does not appear to be a strong relationship between parasitemia and genotypes.**
+
+```{r cache=TRUE, collapse=TRUE, class.source = 'fold-hide'}
+df <- df %>% 
+  mutate(irbc = `Raw counts_iRBCs_CHOLINE_Gen0_0to5hpi`) %>% 
+  mutate(total = `Raw counts_RBC_CHOLINE_Gen0_0to5hpi`)
+
+brm_model <- brm(
+  bf(
+    irbc | trials(total) ~ HBB.genotype
+  ),
+  family = beta_binomial(link = "logit"),
+  data = df,
+  iter = 5000,
+  chains = 8,
+  seed = 42,
+  cores = 8
+)
+```
+
+```{r}
+summary(brm_model)
+```
+
+```{r}
+plot(brm_model)
+```
+
+The Bayesian estimated odds ratios for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(brm_model, ~ HBB.genotype)
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+**These odds ratios have a large overlap with 1 and do not indicate a strong association between parasitemia and genotype.**
+
+The Bayesian estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+## Reticulocyte proportion
+
+**There does not appear to be a strong relationship between reticulocyte proportion and Hbb genotype, except for HbSS (significant wald z, although the Bayesian credible interval is close to 1 [1.113; 4.87]), and HbSC (not significant) do show higher proportions. More (balanced) data might be able to make stronger conclusions.** 
+
+A quick test (not included) showed that a normal binomial model is a poor fit for the data, so we opt for the beta-binomial one immediately.
+
+```{r}
+model <- glmmTMB(
+  cbind(`Raw counts_Retics_Reticulocytes`,
+        `Raw counts_Retics_total RBCs` - `Raw counts_Retics_Reticulocytes`) ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+summary(model)
+```
+
+Some of these estimates appear significant, but when correcting for multiple testing this is no longer the case (except for the HbSS genotype). The magnitude of the effect size for SS and SC is about double, with fairly high standard errors.
+
+Model assumptions are OK.
+
+```{r}
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+The estimated odds ratios (using Wald Z-tests) for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+The estimated parasitemia per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+### Bayesian estimates
+
+As a more conservative estimate, we can use a Bayesian approach while fitting a beta-binomial generalized linear model. The estimated credible intervals for the SRC and odds ratios between genotypes should be less overly optimistic (more conservative).
+
+```{r cache=TRUE, collapse=TRUE, class.source = 'fold-hide'}
+df <- df %>%
+  mutate(retics = `Raw counts_Retics_Reticulocytes`) %>%
+  mutate(retics_total = `Raw counts_Retics_total RBCs`)
+
+brm_model <- brm(
+  bf(
+    retics | trials(retics_total) ~ HBB.genotype
+  ),
+  family = beta_binomial(link = "logit"),
+  data = df,
+  iter = 5000,
+  chains = 8,
+  seed = 42,
+  cores = 8
+)
+```
+
+```{r}
+summary(brm_model)
+```
+
+```{r}
+plot(brm_model)
+```
+
+The Bayesian estimated odds ratios for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(brm_model, ~ HBB.genotype)
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+**These odds ratios are very close to 1 (HbSS), or they include it in their credible interval. The association between reticulocyte proportion and genotype cannot reliably be shown based on this data, but it does appear that HbSS (and perhaps HbSC) have higher reticulocyte counts.**
+
+The Bayesian estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response")
+```
+
+# Model comparison
+
+No random effects are needed since we do not have technical replicates here, unlike the evSCA.
+
+## Binomial generalized linear model
+
+Model assumptions are violated for the regular binomial model: there is clear evidence of overdispersion.
+
+```{r}
+model <- glm(
+  cbind(`Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi`,
+        `Raw counts_Asexual iRBCs_CHOLINE_Gen1_35to40hpi`) ~ HBB.genotype, 
+  family = binomial, data = df)
+
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+# Perform pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "sidak",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+## OLRE GLMM model
+
+We can use a per-observation random effect to account for overdispersion. This seems to alleviate the problems.
+
+```{r}
+df$obs <- seq_len(nrow(df))
+
+model <- glmer(
+  cbind(`Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi`,
+        `Raw counts_Asexual iRBCs_CHOLINE_Gen1_35to40hpi`) ~ HBB.genotype + (1 | obs), 
+  family = binomial, data = df)
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+# Perform pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "sidak",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+## Beta-binomial GLM
+
+Another approach to take the overdispersion into account is to use a beta binomial GLM, this time with a single dispersion parameter (instead of one per group like in the ex vivo assay). For consistency with the ex vivo analysis, we will opt for beta-binomial model. Note that here there is no need for a per-genotype dispersion factor.
+
+```{r}
+model <- glmmTMB(
+  cbind(`Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi`,
+        `Raw counts_Asexual iRBCs_CHOLINE_Gen1_35to40hpi`) ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+# Perform pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "sidak",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+## Accounting for additional factors
+
+The univariate analyses already showed associations between HBB genotype and some of the clinical/demographic factors like blood group, reticulocytes, age and gender. However, accounting for these in the model does not improve overall fit as assessed by a likelihood ratio test of the complex vs simple model. 
+
+Moreover, due to the small sample size and the small and sparse groups, we fear we would not have an adequate amount of representative samples for each of the different levels to make any strong conclusions about the association with the sexual conversion rate. 
+
+The high collinearity between blood group and genotype might also pose a problem, but this is related to the unbalanced representation of blood groups across HBB genotypes (identifyability issues?).
+
+**The direction of estimates remains consistent regardless of which variables are added to the model, but magnitudes and p-value do fluctuate for the HbAS/HbAA and HbSS/HbAA contrasts. This is mainly a concern for the SCR (+Choline, Gen1 35-40hpi) comparison, where the estimated effects shrink for these two contrasts (P grows above 0.05) depending on which additional factors are added.** 
+
+We therefore focus mainly on a descriptive modelling approach with simple parsimonous models with the single parameter of interest (Hbb genotype). That being said, this approach cannot fully exclude confounding or interaction effects, and sample size and power limitations should still be kept in mind when interpreting some of these GL(M)M results, with emphasis on effect sizes over exact p-values.
+
+```{r}
+model_simple <- glmmTMB(
+  cbind(`Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi`,
+        `Raw counts_Asexual iRBCs_CHOLINE_Gen1_35to40hpi`) ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+```
+
+### Multiple variables
+
+The model assumptions are still OK for the more complex model.
+
+Note that the difference between HbAS and HbAA is less pronounced in the full model compared to the genotype-only one, likely because of the strong correlation between blood group and genotype.
+
+
+```{r}
+model <- glmmTMB(
+  cbind(`Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi`,
+        `Raw counts_Asexual iRBCs_CHOLINE_Gen1_35to40hpi`) ~ HBB.genotype + 
+    Bloodgroup +
+    log(Reticulocytes) + Gender + Symptomatic
+    # + scale(Age)
+    # + Village + Ethnicity # missing values for a few of the samples
+  ,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+# Perform pairwise comparisons
+# pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+```{r}
+model <- glmmTMB(
+  cbind(`Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi`,
+        `Raw counts_Asexual iRBCs_CHOLINE_Gen1_35to40hpi`) ~ HBB.genotype + 
+    Bloodgroup +
+    log(Reticulocytes) + Gender + Symptomatic
+    # + scale(Age)
+    # + Village + Ethnicity # missing values for a few of the samples
+  ,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+# Perform pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "sidak",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+There are strong correlations between genotype and blood group (already observed in univariate risk analysis). The other factors appear to be less correlated.
+
+```{r}
+performance::check_collinearity(model)
+```
+
+```{r}
+anova(model, model_simple, test = "LRT")
+```
+The LRT does not show a significantly better model fit for the more complex model.
+
+### Association between genotype and reticulocytes
+
+There is a strong association between Hbb genotype and reticulocytes, but reticulocyte count itself does not seem to be associated with SCR.
+
+```{r}
+ggplot(df, 
+       aes(x = HBB.genotype, y = log(Reticulocytes), color = HBB.genotype)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1)
+
+ggplot(df, aes(x = log(Reticulocytes),
+               y = `Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi` / 
+                         `Raw counts_Asexual iRBCs_CHOLINE_Gen1_35to40hpi`,
+               color = HBB.genotype,
+               fill = HBB.genotype
+               )) +
+  geom_jitter(height = 0.05, width = 0, alpha = 0.3)
+```
+
+Adding it as a variable to control for its potentially confounding effect results in a model that still meets all assumptions. However, sample size is quite small and groups are not balanced, so likely we do not have enough power to resolve both. Moreover, the effect of reticulocytes is not significant, and **the direction and magnitude of the Hbb genotype effect stays consistent, although the p-value is no longer significant for HbSS/HbAA (the Hb/AS effect remains the same).**
+
+```{r}
+model <- glmmTMB(
+  cbind(`Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi`,
+        `Raw counts_Asexual iRBCs_CHOLINE_Gen1_35to40hpi`) ~ HBB.genotype + 
+    log(Reticulocytes), 
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+# Perform pairwise comparisons
+# pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "sidak",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+```{r}
+performance::check_collinearity(model)
+```
+
+```{r}
+anova(model, model_simple, test = "LRT")
+```
+
+In a model with just reticulocytes, its effect does appear to be significant.
+
+```{r}
+model <- glmmTMB(
+  cbind(`Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi`,
+        `Raw counts_Asexual iRBCs_CHOLINE_Gen1_35to40hpi`) ~ log(Reticulocytes), 
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$Reticulocytes)
+```
+
+### Association between genotype and blood group
+
+Checking for any confounding effect of blood group on the relation between SCR and genotype is difficult due to the small and unbalanced group sizes; some blood groups only contain a single genotype, and taken together with the small sample size would lead to subgroups with only 1 or 2 samples.
+
+```{r}
+table(df$Bloodgroup, df$HBB.genotype)
+```
+
+```{r}
+ggplot(data = df %>% group_by(Bloodgroup) %>% count(HBB.genotype),
+       aes(x = Bloodgroup, y = n, fill = HBB.genotype)) + 
+  geom_bar(stat = "identity", position = position_dodge()) + 
+  ylab("Frequency") +
+  xlab("Blood group") +
+  scale_fill_viridis_d() +
+  theme_bw()
+```
+
+```{r}
+ggplot(df, aes(x = Group, y = SCR_CHOLINE_Gen1_35to40hpi, fill = Bloodgroup)) +
+  geom_boxplot(alpha = 0.8) +
+  geom_point(aes(fill = Bloodgroup), size = 4, shape = 21, position = position_jitterdodge()) +
+  theme_minimal()
+```
+
+In a model with only blood group and genotype, blood group itself is not significant. The effect of genotype is less pronounced though, with smaller magnitude and larger p-values for HbAS (but not for HbSS), similar to the model with all variables. The direction and magnitude of estimates remains similar.
+
+```{r}
+model <- glmmTMB(
+  cbind(`Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi`,
+        `Raw counts_Asexual iRBCs_CHOLINE_Gen1_35to40hpi`) ~ HBB.genotype + Bloodgroup,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+# Perform pairwise comparisons
+# pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+SC = c(0,0,0,1,0)
+SS = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbSC / HbAA" = SC - AA,
+                            "HbSS / HbAA" = SS - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+```{r}
+performance::check_collinearity(model)
+```
+
+The LRT prefers the simpler model with just genotype. So we are left with the choice of a simpler model (should be preferable due to small sample size), but we need to be transparent that a model that takes blood group into account would reduce the effect size of genotype on the sexual conversion rate.
+
+```{r}
+anova(model, model_simple, test = "LRT")
+```
+
+A model with just blood group also shows some level of association with SCR, but they disappear when adjusting the p-values for multiple comparisons. So, as for genotype itself, the effects are borderline.
+
+```{r}
+model <- glmmTMB(
+  cbind(`Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi`,
+        `Raw counts_Asexual iRBCs_CHOLINE_Gen1_35to40hpi`) ~ Bloodgroup,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$Bloodgroup)
+
+emm <- emmeans(model, ~ Bloodgroup)
+pairs(emm, adjust="bonferroni", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+```
+
+Comparing to the Kruskal Wallis and Wilcoxon rank-sum test:
+
+```{r}
+kruskal.test(df$`Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi` / 
+               (df$`Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi` + df$`Raw counts_Asexual iRBCs_CHOLINE_Gen1_35to40hpi`) ~ df$Bloodgroup)
+
+kruskal.test(df$`Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi` / 
+               (df$`Raw counts_Sexual iRBCs_CHOLINE_Gen1_35to40hpi` + df$`Raw counts_Asexual iRBCs_CHOLINE_Gen1_35to40hpi`) ~ df$HBB.genotype)
+```
+
+# Software used
+
+```{r}
+grateful::cite_packages(output = "table", out.dir = here(), cite.tidyverse = TRUE)
+```
