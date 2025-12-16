@@ -1,0 +1,1077 @@
+---
+title: "Sexual conversion rate - ex vivo assays"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_depth: 5
+    toc_float:
+      collapsed: FALSE
+    number_sections: TRUE
+    code_folding: show
+---
+
+```{r results='hide', message=FALSE, collapse=TRUE, class.source = 'fold-hide'}
+# load required libraries
+library("lme4")
+library("ggplot2")
+library("here")
+library("tidyverse")
+library("emmeans")
+library("brms")
+library("DHARMa")
+library("glmmTMB")
+library("performance")
+library("scales")
+```
+
+# Exploration and visualisation
+
+A pseudonymized/codified dataset was used as a precaution due to ethical considerations (patient-level clinical data). The full dataset is available upon request (see manuscript data availability statement).
+
+```{r results='hide', message=FALSE, collapse=TRUE}
+# load the data
+df <- read_csv(here("./data/evSCAs_codified.csv"), show_col_types = FALSE) %>%
+  rename(Experiment = `Experiment (= Sample collection Number)`) %>% 
+  rename(HBB.genotype = `HBB Genotype`) %>% 
+  fill(c(ID, Experiment, Age, Gender, Village, Ethnicity, Symptomatic), .direction = "down") %>% 
+  # mutate(across(c(ID, Experiment, Sample, HBB.genotype, Gender, Village, Ethnicity, Symptomatic), as.factor)) %>% 
+  mutate(across(c(`Date of IFA staining`, `Date of IFA counting`), as.Date)) %>%
+  select(Sample, Total_parasite_counts, Gametocyte_counts, HBB.genotype, varATS_par_µL_D0,
+         Age, Gender, Village, Ethnicity, Symptomatic) %>%
+  mutate(HBB.genotype = case_when(
+    HBB.genotype == 0 ~ "HbAA",
+    HBB.genotype == 1 ~ "HbAC",
+    HBB.genotype == 2 ~ "HbAS",
+  )) %>%
+  mutate(across(c(Sample, HBB.genotype, Gender, Village, Ethnicity, Symptomatic), as.factor)) %>% 
+  mutate(HBB.genotype = fct_relevel(HBB.genotype, "HbAA")) # set HbAA as baseline reference
+```
+
+```{r}
+str(df)
+summary(df)
+```
+
+Box plots and scatter plots of mean conversion rate (averaged across replicates) versus the different categorical/continuous variables.
+
+```{r}
+df_grouped <- df %>% 
+  group_by(Sample) %>% 
+  mutate(mean_prop = mean(Gametocyte_counts/Total_parasite_counts)) %>% 
+  distinct(Sample, .keep_all = TRUE)
+
+boxplot(df_grouped$mean_prop ~ df_grouped$HBB.genotype)
+boxplot(df_grouped$mean_prop ~ df_grouped$Village)
+boxplot(df_grouped$mean_prop ~ df_grouped$Symptomatic)
+boxplot(df_grouped$mean_prop ~ df_grouped$Ethnicity)
+boxplot(df_grouped$mean_prop ~ df_grouped$Gender)
+plot(df_grouped$mean_prop ~ df_grouped$Age)
+
+ggplot(df_grouped, 
+       aes(x = HBB.genotype, y = Gametocyte_counts/Total_parasite_counts,color = HBB.genotype)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1)
+
+ggplot(df_grouped, 
+       aes(fill = HBB.genotype, x = Gametocyte_counts/Total_parasite_counts)) +
+  geom_density(alpha=0.4) +
+  geom_vline(data=df_grouped %>% group_by(HBB.genotype) %>% summarise(genotype.median = median(Gametocyte_counts/Total_parasite_counts)), aes(xintercept=genotype.median, color=HBB.genotype),
+             linetype="dashed")
+```
+
+More detailed plots of conversion rate:
+
+```{r}
+ggplot(df, aes(x = varATS_par_µL_D0, y = Gametocyte_counts/Total_parasite_counts, color = HBB.genotype)) +
+  geom_jitter(height = 0.05, width = 0, alpha = 0.4) 
+ 
+ggplot(df, aes(x = log(varATS_par_µL_D0),
+               y = log(Gametocyte_counts / Total_parasite_counts),
+               color = HBB.genotype,
+               fill = HBB.genotype,
+               group = Sample)) +
+  geom_jitter(height = 0.05, width = 0, alpha = 0.3) +
+  stat_summary(fun = mean, geom = "point", size = 3, shape=23, fill="grey", alpha=0.9) +
+  facet_wrap(~ HBB.genotype) +
+  labs(title = "log(varATS) versus log(SCR) (all technical replicates)")
+
+ggplot(df, aes(x = log(varATS_par_µL_D0), 
+               y = log(Gametocyte_counts / Total_parasite_counts), 
+               color = HBB.genotype, 
+               fill = HBB.genotype,
+               group = Sample)) +
+  geom_jitter(height = 0.05, width = 0, alpha = 0.3) +
+  stat_summary(fun = mean, geom = "point", size = 3, shape=23, fill="grey", alpha=0.9) +
+  facet_wrap(~ Village) +
+  labs(title = "log(varATS) versus SCR (all technical replicates) - facet by village")
+
+ggplot(df, aes(x = log(varATS_par_µL_D0), 
+               y = log(Gametocyte_counts / Total_parasite_counts), 
+               color = HBB.genotype, 
+               fill = HBB.genotype,
+               group = Sample)) +
+  geom_jitter(height = 0.05, width = 0, alpha = 0.3) +
+  stat_summary(fun = mean, geom = "point", size = 3, shape=23, fill="grey", alpha=0.9) +
+  facet_wrap(~ HBB.genotype*Village) +
+  labs(title = "log(varATS) versus log(SCR) (all technical replicates) - facet by village*genotype")
+
+
+ggplot(df, aes(x = log(varATS_par_µL_D0), 
+               y = log(Gametocyte_counts / Total_parasite_counts), 
+               color = HBB.genotype, 
+               fill = HBB.genotype)) +
+  geom_jitter(height = 0.05, width = 0, alpha = 0.3) +
+  stat_summary(fun = mean, geom = "point", size = 3, shape=23, fill="grey", alpha=0.9) +
+  facet_wrap(~ Gender) +
+  labs(title = "log(varATS) versus log(SCR) (all technical replicates) - facet by gender")
+
+ggplot(df, aes(x = log(varATS_par_µL_D0), 
+               y = log(Gametocyte_counts / Total_parasite_counts), 
+               color = HBB.genotype, 
+               fill = HBB.genotype)) +
+  geom_jitter(height = 0.05, width = 0, alpha = 0.3) +
+  stat_summary(fun = mean, geom = "point", size = 3, shape=23, fill="grey", alpha=0.9) +
+  facet_wrap(~ Ethnicity) +
+  labs(title = "log(varATS) versus log(SCR) (all technical replicates) - facet by ethnicity")
+
+ggplot(df, aes(x = log(varATS_par_µL_D0), 
+               y = log(Gametocyte_counts / Total_parasite_counts), 
+               color = HBB.genotype, 
+               fill = HBB.genotype)) +
+  geom_jitter(height = 0.05, width = 0, alpha = 0.3) +
+  stat_summary(fun = mean, geom = "point", size = 3, shape=23, fill="grey", alpha=0.9) +
+  facet_wrap(~ Symptomatic) +
+  labs(title = "log(varATS) versus log(SCR) (all technical replicates) - facet by symptomatic")
+```
+
+## Conclusions based on visual exploration
+
+Hb genotype shows a strong visual association with SCR.
+
+The demographic factors are less pronounced, barring possibly village. However, there are only 2 samples in village 4, both of which have higher than average parasitemia. This effect is probably not relevant in our data, but might be caused by outlying samples. We likely do not have enough representative high parasitemia samples (across different villages) to make any conclusive statements about this association.
+
+Looking at the SCR vs parasitemia plots (grouped by genotype), there does not appear to be a clear association between the two. However, the two highest parasitemia samples (all in HbAS) do show the highest SCR, which might underlies the interaction effect between parasitemia*genotype we observe in some of the models (see [model comparison](#model-comparison)). Because of the high variation in SCR across parasitemia, the stratification of parasitemia by genotype and the fact that we do not have a well balanced representation across different parasitemia values, we opt to be careful here to avoid over-interpreting any significant parasitemia (or interaction) effects.
+
+Because of the small sample size and unbalanced groups, and its effect on model assumptions for more complex models (see [model comparison](#model-comparison)), we therefore focus mainly on a descriptive modelling approach with simple parsimonous models with the single parameter of interest (Hbb genotype), which is backed by the likelihood ratio tests shown in the [model comparison section](#model-comparison). That being said, this approach cannot fully exclude confounding or interaction effects, and sample size and power limitations should still be kept in mind when interpreting some of these GL(M)M results, with emphasis on effect sizes over exact p-values.
+
+# Final model
+
+To keep things interpretable, and taking into account the fact that some variables are not covered by a lot of samples (e.g. sparse/uneven representation across parasitemia and village), plus the fact that most estimates remain consistent in directionality and magnitude and LRTs favour it, we opt for the most parsimonious model:
+
+**A generalized linear mixed model using the beta-binomial family with a random effect to account for the technical replicates and a per-genotype dispersion parameter.**
+
+$$SCR \sim HBB.genotype + (1 | Sample)$$
+
+$$\phi \sim HBB.genotype$$
+
+However, as discussed in the [model comparison section](#model-comparison), this approach cannot fully exclude confounding or interaction effects, and sample size and power limitations should still be kept in mind when interpreting some of these GL(M)M results, with emphasis on effect sizes over exact p-values.
+
+For the *Bayesian parameter estimates* (which are less liberal than the standard Wald Z estimates), we had to resort to a more simple *binomial model* (which exhibits some overdispersion), because there were convergence issues with the more complex beta-binomial one. 
+
+## Model fit
+
+```{r}
+model <- glmmTMB(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~
+    HBB.genotype + (1 | Sample),
+  dispformula = ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+summary(model)
+```
+
+## Model assumptions
+
+All model assumptions are met:
+
+```{r}
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+## Estimates
+
+The estimated odds ratios (using Wald Z-tests) for the different genotype contrasts are as follows:
+
+```{r}
+emm <- emmeans(model, ~ HBB.genotype)
+pairs(emm, adjust="bonferroni", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+```
+
+The above table not only shows the estimated odds ratio and its corresponding p-value, but also the confidence interval of this odds ratio (= `asymp.LCL` and `asymp.UCL`).
+
+These p-values are adjusted for multiple testing using the Bonferroni method. 
+
+The estimates are already transformed from the log-scale, so they can be directly interpreted as odds ratios (OR).
+
+The estimated SCR per genotype is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+### Bayesian estimates
+
+As a more conservative estimate, we can use a Bayesian approach while fitting a regular binomial generalized linear mixed model with the same random effect. The estimated credible intervals for the SRC and odds ratios between genotypes should be less overly optimistic (more conservative).
+
+This binomial model *does not* fulfil all model assumptions (degree of heteroskedasticity), but the estimates are in line with the beta-binomial model.
+
+```{r cache=TRUE, collapse=TRUE, class.source = 'fold-hide'}
+# fit a bayesian GLMM
+brm_model <- brm(
+  Gametocyte_counts | trials(Total_parasite_counts) ~ HBB.genotype + (1 | Sample),
+  family = binomial,
+  data = df,
+  iter = 5000,
+  chains = 8,
+  seed = 42,
+  cores = 8
+)
+```
+
+```{r}
+summary(brm_model)
+```
+
+Model assumptions (fit via glmer in order to use DHARMa):
+
+```{r}
+bm_model <- glmer(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~ 
+    HBB.genotype + (1 | Sample), 
+  family = binomial, data = df)
+summary(bm_model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(bm_model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+Bayesian odds ratios estimates and credible intervals:
+
+```{r}
+brm_emm <- emmeans(brm_model, ~ HBB.genotype)
+pairs(brm_emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+```
+
+Bayesian SCR estimates:
+
+```{r}
+confint(brm_emm, type="response")
+```
+
+
+# Model comparison
+
+Briefly:
+
+- **Most models report similar SRC estimates/odds ratios.**
+- The binomial model with genotype as the only independent variable meets most model assumptions, although the variance differences between the genotype groups might be better captured by a beta binomial model (Levene Test for homogeneity of variance is significant). This could indicate that there is a [systematic dependency of the dispersion/variance on another variable in the model](https://cran.r-project.org/web/packages/DHARMa/vignettes/DHARMa.html#heteroscedasticity). 
+- The beta binomial model with genotype-only and a per-genotype dispersion factor is similar, but does pass the variance homogeneity test.
+- Bayesian models do not converge for any of the beta-binomial models.
+  - Bayesian estimates are preferred over the parametric (wald z) estimates/p-values because the latter are too liberal (confidence intervals too narrow/p-values too optimistic, since they depend on large sample size/asymptotic assumptions).
+- An alternative approach to fixing overdispersion/accounting for per-genotype dispersion differences would be to use an observation-level random effect in a binomial model, instead of a beta-binomial model. These models still show problematic model assumptions unfortunately.
+
+On adding additional covariates:
+
+Since we have such small sample (and group) sizes, we need to be careful in adding too many covariates to the model, and model assumptions still need to be met for these more complex models. On the other hand, we should also avoid missing any important biological factors or potential confounding factors.
+
+LRTs of complex vs reduced model indicate that the simple models are OK to use. Since these focus on the main biological factor of interest, we will opt to use these and clarify in the text that we are unable to exclude the potential relevance of other factors.
+
+Moreover, the direction and magnitude of our estimates remains similar across the different models.
+
+- Models that add parasitemia as a variable (+ optional interaction effect) all show problematic residual vs predicted deviation. The best options appears to be beta-binomial genotype\*parasitemia, but DHARMA fitting results in warnings (step failure) and we likely do not have enough samples for every genotype*parasitemia level to make conclusive statements.
+- Models with interaction effects make it more difficult to report on the estimated per-group SCR and the odds ratio contrasts (because these effects will differ for different levels of parasitemia).
+- Adding village makes the interaction effect stronger, likely because there are so few values for village 4, which all have high parasitemias. But due to the small sample size per group, I believe we cannot rely on these model estimates.
+  - Adding gender can omit the need for the interaction effect, by providing good model assumptions, even though both parasitemia and gender are not significant. Could this be caused by non-uniform groups of samples (or random noise in the data?) that receive an improved fit when taking into account gender/interactions/etc.?
+  - the small number of samples for different levels of the additional variables could be a cause of concern.
+  - we could consider modelling some of these variables as random effects too, e.g. to account for between-village differences (but the effect should be similar to adding it as a normal variable since there are only a few levels).
+
+**Decision:**
+
+- ~~use a simple genotype-only binomial model (allows Bayesian credible intervals)~~
+or
+- ~~use a beta-binomial model with genotype\*parasitemia (interaction) (without Bayesian estimates): more difficult to interpret odds ratios and trends appear to remain similar
+- **use a simple genotype-only beta-binomial model (without Bayesian estimates)**
+
+## GLMM Binomial - genotype-only
+
+```{r}
+model <- glmer(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~ 
+    HBB.genotype + (1 | Sample), 
+  family = binomial, data = df)
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+# Perform pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+```
+
+## GLMM Binomial genotype + parasitemia
+
+```{r}
+model <- glmer(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~ 
+    HBB.genotype + scale(varATS_par_µL_D0) + (1 | Sample), 
+  family = binomial, data = df)
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+# Perform pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+```
+
+## GLMM Binomial genotype * parasitemia
+
+```{r}
+model <- glmer(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~ 
+    HBB.genotype * scale(varATS_par_µL_D0) + (1 | Sample), 
+  family = binomial, data = df)
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+# Perform pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+```
+
+## GLMM betabinomial genotype-only
+
+Still shows heteroskedasticity...
+
+```{r}
+model <- glmmTMB(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~
+    HBB.genotype + (1 | Sample),
+  family = betabinomial(link = "logit"),
+  data = df
+)
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+# Perform pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+```
+
+## GLMM betabinomial genotype-only - per-genotype dispersion
+
+Adding per-genotype dispersion factor appears to improve model fit.
+
+```{r}
+model <- glmmTMB(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~
+    HBB.genotype + (1 | Sample),
+    # HBB.genotype + scale(varATS_par_µL_D0) + (1 | Sample),
+    # HBB.genotype + (1 | Sample),
+    # HBB.genotype + scale(varATS_par_µL_D0) + HBB.genotype*scale(varATS_par_µL_D0) + (1 | Sample),
+  dispformula = ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+summary(model)
+```
+
+```{r}
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+# Perform pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+```
+
+## GLMM betabinomial genotype + parasitemia - per-genotype dispersion
+
+Adding parasitemia leads to strong quantile deviations in the residuals.
+
+```{r}
+model <- glmmTMB(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~
+    # HBB.genotype (1 | Sample),
+    HBB.genotype + scale(varATS_par_µL_D0) + (1 | Sample),
+    # HBB.genotype + (1 | Sample),
+    # HBB.genotype + scale(varATS_par_µL_D0) + HBB.genotype*scale(varATS_par_µL_D0) + (1 | Sample),
+  dispformula = ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+summary(model)
+```
+
+```{r}
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+# Perform pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+```
+
+## GLMM betabinomial genotype * parasitemia - per-genotype dispersion
+
+Adding an interaction effect appears to fix the pattern/dependencies in the residuals, but i) leads to some amount of heteroskedasticity and ii) results in fitting warnings (step failure).
+
+
+```{r}
+# create scaled parasitemia for interpretation in emmeans
+model <- glmmTMB(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~
+    HBB.genotype * scaled_varATS_par_µL_D0 + (1 | Sample),
+    dispformula = ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df %>% mutate(scaled_varATS_par_µL_D0 = scale(varATS_par_µL_D0))
+)
+summary(model)
+```
+
+```{r}
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+Since there is an interaction effect here, it is not trivial to just predict the effect/odds ratio for the different genotypes. We can however visualise how the association with parasitemia changes for these different genotype groups (i.e. the slope of the parasitemia effect):
+
+```{r}
+# slope of parasitemia for different genotypes
+emtrends(model, pairwise ~ HBB.genotype, var = "scaled_varATS_par_µL_D0")
+
+# visualise slopes
+emmip(model, HBB.genotype ~ scaled_varATS_par_µL_D0, cov.reduce = range)
+```
+
+It appears that the parasitemia association is slightly negative for HbAA and positive for the others. However, none of the slopes are significant. As we saw in the exploratory plots, parasitemia is quite variable and a few high/low samples are enough to create these slope lines.
+
+When we make the contrasts between the genotype groups, we need to choose at which level of parasitemia to do so. The mean value seems to give higher effect sizes than in the genotype-only models (likely because there are a few high outlying parasitemia samples), but the median parasitemia comparison seems to be more in-line with previous models.
+
+```{r}
+# emm <- emmeans(model, ~ HBB.genotype)
+# pairs(emm, simple = "HBB.genotype", adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# compare genotypes at average parasitemia
+emm <- emmeans(model, ~ HBB.genotype*scaled_varATS_par_µL_D0, cov.reduce=mean)
+pairs(emm, simple = "HBB.genotype", adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# compare genotypes at median parasitemia instead
+emm <- emmeans(model, ~ HBB.genotype*scaled_varATS_par_µL_D0, cov.reduce=median)
+pairs(emm, simple = "HBB.genotype", adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# compare at specific value using emmeans(model, ~ HBB.genotype*scaled_varATS_par_µL_D0, at = list(scaled_varATS_par_µL_D0 = 40)), but needs to happen in scaled range
+```
+
+## Bayesian estimates
+
+None of the beta binomial models defined above can be fit using the Bayesian approach ("parts of the model have not converged" warning).
+
+An alternative approach using a regular binomial model plus a per-observation random factor (which is an alternative approach to modelling overdispersion) does converge, but at the expense of homogeneity of variance (see next section).
+
+```{r cache=TRUE, collapse=TRUE, class.source = 'fold-hide'}
+brm_model <- brm(
+  bf(
+    Gametocyte_counts | trials(Total_parasite_counts) ~ 
+      HBB.genotype + scale(varATS_par_µL_D0) + (1 | Sample),
+    phi ~ HBB.genotype  # dispersion (precision) depends on genotype
+  ), 
+  family = beta_binomial(link = "logit"),
+  data = df,
+  iter = 5000,
+  chains = 4,
+  # control = list(adapt_delta = 0.95),
+  seed = 42,
+  cores = 8
+)
+```
+
+```{r}
+summary(brm_model)
+```
+
+```{r cache=TRUE, collapse=TRUE, class.source = 'fold-hide'}
+brm_model <- brm(
+  bf(
+    Gametocyte_counts | trials(Total_parasite_counts) ~ 
+      HBB.genotype * scale(varATS_par_µL_D0) + (1 | Sample),
+    phi ~ HBB.genotype  # dispersion (precision) depends on genotype
+  ), 
+  family = beta_binomial(link = "logit"),
+  data = df,
+  iter = 5000,
+  chains = 4,
+  # control = list(adapt_delta = 0.95),
+  seed = 42,
+  cores = 8
+)
+```
+
+```{r}
+summary(brm_model)
+```
+
+```{r cache=TRUE, collapse=TRUE, class.source = 'fold-hide'}
+brm_model <- brm(
+  bf(
+    Gametocyte_counts | trials(Total_parasite_counts) ~ 
+      HBB.genotype + (1 | Sample),
+    phi ~ HBB.genotype  # dispersion (precision) depends on genotype
+  ), 
+  family = beta_binomial(link = "logit"),
+  data = df,
+  iter = 5000,
+  chains = 4,
+  # control = list(adapt_delta = 0.95),
+  seed = 42,
+  cores = 8
+)
+```
+
+```{r}
+summary(brm_model)
+```
+
+```{r cache=TRUE, collapse=TRUE, class.source = 'fold-hide'}
+brm_model <- brm(
+  bf(
+    Gametocyte_counts | trials(Total_parasite_counts) ~ 
+      HBB.genotype + (1 | Sample),
+    phi ~ HBB.genotype  # dispersion (precision) depends on genotype
+  ), 
+  family = beta_binomial(link = "logit"),
+  data = df,
+  iter = 5000,
+  chains = 4,
+  # control = list(adapt_delta = 0.95),
+  seed = 42,
+  cores = 8
+)
+```
+
+```{r}
+summary(brm_model)
+```
+
+## Observation-level random effects
+
+Since the betabinomial models do not converge when using the Bayesian fitting method, we could use an observation-level random effects (OLRE) to account for overdispersion instead:
+
+```{r cache=TRUE, collapse=TRUE, class.source = 'fold-hide'}
+df$obs <- seq_len(nrow(df))
+
+brm_model <- brm(
+  Gametocyte_counts | trials(Total_parasite_counts) ~ HBB.genotype + (1 | Sample) + (1 | obs),
+  family = binomial,
+  data = df,
+  iter = 5000,
+  chains = 8,
+  seed = 42,
+  cores = 8
+)
+```
+
+```{r}
+summary(brm_model)
+```
+
+Assessing model fit for the ORLE requires the model to be fit using lme4 instead of brms.
+
+```{r}
+model <- glmer(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~ 
+    HBB.genotype + (1 | Sample) + (1 | obs), 
+  family = binomial, data = df)
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+# Perform pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+```
+
+Unfortunately, the OLRE doesn't seem to fix the overdispersion/per-genotype dispersion differences entirely (i.e. betabinomial with per-genotype dispersion is still preferred).
+
+Even adding parasitemia to the OLRE, the problems remain.
+
+```{r}
+model <- glmer(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~ 
+    HBB.genotype + scale(varATS_par_µL_D0) + (1 | Sample) + (1 | obs), 
+  family = binomial, data = df)
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+# Perform pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+```
+
+```{r}
+model <- glmer(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~ 
+    HBB.genotype * scale(varATS_par_µL_D0) + (1 | Sample) + (1 | obs), 
+  family = binomial, data = df)
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+# Perform pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+```
+
+## Adding additional variables
+
+**Adding too many additional variables could be problematic due to small sample/group sizes.**
+
+Model assumptions remain problematic without adding the interaction effect.
+
+```{r}
+model <- glmmTMB(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~
+    HBB.genotype + 
+    scale(varATS_par_µL_D0) + scale(Age) + Gender + Village + Ethnicity + Symptomatic +
+    (1 | Sample),
+  dispformula = ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+# Perform pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+```
+
+Variables do not seem to be overly correlated though.
+
+```{r}
+performance::check_collinearity(model)
+```
+
+The model assumptions improve when we add the parasitemia*genotype interaction effect.
+
+```{r}
+model <- glmmTMB(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~
+    HBB.genotype * scale(varATS_par_µL_D0) + 
+    scale(Age) + Gender + Village + Ethnicity + Symptomatic +
+    (1 | Sample),
+  dispformula = ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+# Perform pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+```
+
+```{r}
+performance::check_collinearity(model)
+```
+
+But even just adding gender and parasitemia, without the interaction effect, also seems to work, even though gender itself is once again not significant.
+
+```{r}
+model <- glmmTMB(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~
+    HBB.genotype + scale(varATS_par_µL_D0) + Gender +
+    (1 | Sample),
+  dispformula = ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+# Perform pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+```
+
+```{r}
+performance::check_collinearity(model)
+```
+
+## Likelihood ratio tests to compare complex and reduced models
+
+**LRT suggests that the simple model is the better fit and there is no evidence to include the additional factors.**
+
+Risk factors / biological relevant factors:
+
+```{r}
+model <- glmmTMB(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~
+    HBB.genotype + 
+    scale(varATS_par_µL_D0) + scale(Age) + Gender + Village + Ethnicity + Symptomatic +
+    (1 | Sample),
+  dispformula = ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+model_simple <- glmmTMB(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~
+    HBB.genotype + (1 | Sample),
+  dispformula = ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+anova(model, model_simple, test = "LRT")
+```
+
+Interaction effect:
+
+```{r}
+model <- glmmTMB(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~
+    HBB.genotype * scale(varATS_par_µL_D0) + 
+    scale(Age) + Gender + Village + Ethnicity + Symptomatic +
+    (1 | Sample),
+  dispformula = ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+anova(model, model_simple, test = "LRT")
+```
+
+
+Even simpler model containing only the parasitemia interaction, symptomatic or gender factor do not improve model fit:
+
+```{r}
+model <- glmmTMB(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~
+    HBB.genotype + 
+    Symptomatic +
+    (1 | Sample),
+  dispformula = ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+anova(model, model_simple, test = "LRT")
+```
+
+```{r}
+model <- glmmTMB(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~
+    HBB.genotype + 
+    Gender +
+    (1 | Sample),
+  dispformula = ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+anova(model, model_simple, test = "LRT")
+```
+
+
+```{r}
+model <- glmmTMB(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~
+    HBB.genotype * scale(varATS_par_µL_D0) +
+    (1 | Sample),
+  dispformula = ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+anova(model, model_simple, test = "LRT")
+```
+
+```{r}
+model <- glmmTMB(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~
+    HBB.genotype + scale(varATS_par_µL_D0) + Gender +
+    (1 | Sample),
+  dispformula = ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+anova(model, model_simple, test = "LRT")
+```
+
+```{r}
+model <- glmmTMB(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~
+    HBB.genotype * scale(varATS_par_µL_D0) + Gender +
+    (1 | Sample),
+  dispformula = ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+
+anova(model, model_simple, test = "LRT")
+```
+
+## Adding additional variables as random effects
+
+Since there appears to be some difference between villages, and there are very few samples for some villages, we could try modelling village as a random factor, but this does not lead to a good fitting model.
+
+```{r}
+model <- glmer(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~ 
+    HBB.genotype + (1 | Sample) + (1 | Village), 
+  family = binomial, data = df)
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+# Perform pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+```
+
+Adding the extra cofactors improves fit now, but the LRT is still not significantly in favour of the more complex model.
+
+```{r}
+model <- glmmTMB(
+  cbind(Gametocyte_counts, Total_parasite_counts - Gametocyte_counts) ~
+    HBB.genotype +
+    scale(varATS_par_µL_D0) + Gender + Symptomatic + 
+    # scale(varATS_par_µL_D0) + scale(Age) + Gender + Village + Ethnicity + Symptomatic +
+    (1 | Sample) + (1 | Village),
+  dispformula = ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+# Perform pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+```
+
+```{r}
+anova(model, model_simple, test = "LRT")
+```
+
+
+
+# Software used
+
+```{r}
+grateful::cite_packages(output = "table", out.dir = here(), cite.tidyverse = TRUE)
+```

@@ -1,0 +1,1446 @@
+---
+title: "Sexual conversion rate - IgG and IgM reactivity measured by flow cytometry"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_depth: 5
+    toc_float:
+      collapsed: FALSE
+    number_sections: TRUE
+    code_folding: show
+---
+
+```{r results='hide', message=FALSE, collapse=TRUE, class.source = 'fold-hide'}
+# load required libraries
+library("lme4")
+library("ggplot2")
+library("here")
+library("tidyverse")
+library("emmeans")
+library("brms")
+library("DHARMa")
+library("glmmTMB")
+library("performance")
+library("scales")
+```
+
+# Exploration and visualisation
+
+A pseudonymized/codified dataset was used as a precaution due to ethical considerations (patient-level clinical data). The full dataset is available upon request (see manuscript data availability statement).
+
+```{r results='hide', message=FALSE, collapse=TRUE}
+# load the data
+df <- read_csv(here("./data/Ig_detection_codified.csv"), show_col_types = FALSE) %>%
+  # rename(Experiment = `Experiment (= Sample collection Number)`) %>% 
+  rename(HBB.genotype = `HBB Genotype`,
+         `Raw IgM+ RBC counts_IgM plate` = `Raw IgG+ RBC counts_IgM plate`) %>% 
+  mutate(across(c(`Date Flow cytometry experiment`), as.Date)) %>% 
+  select(
+    ID, HBB.genotype, Sample_type,
+    `Raw IgG+ RBC counts_IgG plate`,	`Raw IgG+ iRBC counts`,	`Raw IgG+ Asexual iRBC counts`, `Raw IgG+ Sexual iRBC counts`,
+    `Raw IgM+ RBC counts_IgM plate`,	`Raw IgM+ iRBC counts`,	`Raw IgM+ Asexual iRBC counts`,	`Raw IgM+ Sexual iRBC counts`,
+    `Raw IgG- iRBC counts`,	`Raw IgG- Asexual iRBC counts`,	`Raw IgG- Sexual iRBC counts`,	
+    `Raw IgM- iRBC counts`, `Raw IgM- Asexual iRBC counts`,	`Raw IgM- Sexual iRBC counts`,
+    Age_group, Gender, Village, CollectionSite, 
+    Pf_infection, Parasites_µL, Gametocytes_µL, iRBCs_IgG_PercentageCells, iRBCs_IgM_PercentageCells
+  ) %>% 
+  rename(
+    raw_igGpos_RBC = `Raw IgG+ RBC counts_IgG plate`,
+    raw_igGpos_iRBC = `Raw IgG+ iRBC counts`,
+    raw_igGpos_asexual = `Raw IgG+ Asexual iRBC counts`,
+    raw_igGpos_sexual = `Raw IgG+ Sexual iRBC counts`,
+    raw_igMpos_RBC = `Raw IgM+ RBC counts_IgM plate`,
+    raw_igMpos_iRBC = `Raw IgM+ iRBC counts`,
+    raw_igMpos_asexual = `Raw IgM+ Asexual iRBC counts`,
+    raw_igMpos_sexual = `Raw IgM+ Sexual iRBC counts`,
+    raw_igGneg_iRBC = `Raw IgG- iRBC counts`,	
+    raw_igGneg_asexual = `Raw IgG- Asexual iRBC counts`,
+    raw_igGneg_sexual = `Raw IgG- Sexual iRBC counts`,
+    raw_igMneg_iRBC = `Raw IgM- iRBC counts`,
+    raw_igMneg_asexual = `Raw IgM- Asexual iRBC counts`,
+    raw_igMneg_sexual = `Raw IgM- Sexual iRBC counts`,
+  ) %>% 
+  mutate(HBB.genotype = case_when(
+    HBB.genotype == 0 ~ "HbAA",
+    HBB.genotype == 1 ~ "HbAC",
+    HBB.genotype == 2 ~ "HbAS",
+    HBB.genotype == 3 ~ "HbCC",
+    HBB.genotype == 4 ~ "HbSC",
+  )) %>%
+  mutate(Pf_infection = case_when(
+    Pf_infection == 0 ~ "NO",
+    Pf_infection == 1 ~ "YES",
+  )) %>%
+  mutate(across(c(ID, HBB.genotype, Sample_type, Gender, Village,
+                  CollectionSite, Pf_infection, Age_group), 
+                as.factor)) %>%
+  mutate(HBB.genotype = fct_relevel(HBB.genotype, "HbAA")) %>% # set HbAA as baseline reference
+  drop_na(starts_with("raw_"))
+  
+all(df$HBB.genotype == df$Sample_type)
+```
+
+
+## IgG
+
+```{r}
+plot_func <-
+  function(data, x, y, title){
+    data %>%
+      ggplot(
+        aes(x = {{x}},
+            y = {{y}}))+
+      geom_boxplot(aes(fill = {{x}}), outlier.size = 2, outlier.colour = "grey",
+                   width = 0.8, position = position_dodge(width = 0.8)) +  # Reduce space between boxplots
+      geom_point(aes(fill = {{x}}), alpha = 0.8, shape = 21, colour= "#115e67a6",
+                 position = position_jitter(width = 0.1, seed = 42)
+                 ) +
+      scale_fill_manual(values = 
+                          c("HbAA" ="paleturquoise","AA" ="paleturquoise", 
+                            "HbAC" = "palegreen", 
+                            "HbAS" = "thistle",
+                            "HbCC" = "lightpink1",
+                            "HbSC"= "peachpuff")) +
+      scale_y_continuous(
+        # limits = c(0, 1), 
+        labels = label_percent()) +
+      theme_minimal() +
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 14),  # Increase font size for x-axis ticks
+        axis.text.y = element_text(size = 14),  # Increase font size for y-axis ticks
+        axis.title.x = element_text(size = 16),  # Increase font size for x-axis title
+        axis.title.y = element_text(size = 16),  # Increase font size for y-axis title
+        strip.text = element_text(size = 12),
+        panel.grid.major = element_blank(),   # Remove major gridlines
+        panel.grid.minor = element_blank(),   # Remove minor gridlines
+        axis.line = element_line(color = "black")  # Add black axis lines
+      ) +
+      labs(title = title)
+}
+
+plot_func(data = df, x = HBB.genotype, y = raw_igGpos_iRBC / (raw_igGpos_iRBC + raw_igGneg_iRBC), "iRBC IgG+ / iRBCs")
+plot_func(data = df, x = HBB.genotype, y = raw_igGpos_asexual / (raw_igGpos_asexual + raw_igGneg_asexual), "Asexual IgG+ / asexual iRBCs")
+plot_func(data = df, x = HBB.genotype, y = raw_igGpos_sexual / (raw_igGpos_sexual + raw_igGneg_sexual), "Sexual iRBC IgG+ / sexual iRBCs")
+```
+
+## IgM
+
+```{r}
+plot_func(data = df, x = HBB.genotype, y = raw_igMpos_iRBC / (raw_igMpos_iRBC + raw_igMneg_iRBC), "iRBC IgM+ / iRBCs")
+plot_func(data = df, x = HBB.genotype, y = raw_igMpos_asexual / (raw_igMpos_asexual + raw_igMneg_asexual), "Asexual IgM+ / asexual iRBCs")
+plot_func(data = df, x = HBB.genotype, y = raw_igMpos_sexual / (raw_igMpos_sexual + raw_igMneg_sexual), "Sexual iRBC IgM+ / sexual iRBCs")
+```
+
+## Pf infection
+
+```{r}
+ggplot(df,
+       aes(x = Pf_infection, y = raw_igGpos_iRBC / (raw_igGpos_iRBC + raw_igGneg_iRBC))) +
+      geom_boxplot(width = 0.8, position = position_dodge(width = 0.8)) + 
+      geom_point(alpha = 0.8, shape = 21, colour= "#115e67a6",
+                 position = position_jitter(width = 0.1, seed = 42))
+
+ggplot(df,
+      aes(x = Pf_infection, y = iRBCs_IgG_PercentageCells/100)) +
+      geom_boxplot(width = 0.8, position = position_dodge(width = 0.8)) + 
+      geom_point(alpha = 0.8, shape = 21, colour= "#115e67a6",
+                 position = position_jitter(width = 0.1, seed = 42))
+
+ggplot(df,
+       aes(x = Pf_infection, y = raw_igMpos_iRBC / (raw_igMpos_iRBC + raw_igMneg_iRBC))) +
+      geom_boxplot(width = 0.8, position = position_dodge(width = 0.8)) + 
+      geom_point(alpha = 0.8, shape = 21, colour= "#115e67a6",
+                 position = position_jitter(width = 0.1, seed = 42)) +
+        scale_y_continuous(
+        limits = c(0, .15),
+        labels = label_percent())
+
+ggplot(df,
+      aes(x = Pf_infection, y = iRBCs_IgM_PercentageCells/100)) +
+      geom_boxplot(width = 0.8, position = position_dodge(width = 0.8)) + 
+      geom_point(alpha = 0.8, shape = 21, colour= "#115e67a6",
+                 position = position_jitter(width = 0.1, seed = 42)) +
+          scale_y_continuous(
+        limits = c(0, .15),
+        labels = label_percent())
+```
+
+Comparison between percentage and raw values.
+
+```{r}
+plot_func(data = df, x = Pf_infection, y = raw_igGpos_iRBC / (raw_igGpos_iRBC + raw_igGneg_iRBC), "iRBC IgG+ / iRBCs")
+plot_func(data = df, x = Pf_infection, y = iRBCs_IgG_PercentageCells, "iRBCs_IgG_PercentageCells")
+
+plot_func(data = df, x = Pf_infection, y = raw_igMpos_iRBC / (raw_igMpos_iRBC + raw_igMneg_iRBC), "iRBC IgM+ / iRBCs")
+plot_func(data = df, x = Pf_infection, y = iRBCs_IgM_PercentageCells, "iRBCs_IgM_PercentageCells")
+```
+
+Figure for publication:
+
+```{r}
+# Color palette
+fill_colors <- c("NO"="#FFDAB5",
+                 "YES" ="#7BAFD4")
+outline_colors <- c(
+  "NO"="#FF8C00",
+  "YES" ="#375D81")
+
+
+# Updated outline colors (darker tones)
+outline_colors <- c(
+  "NO"="#FF8C00",
+  "YES"= "#375D81"
+)
+
+summary_stats <- df %>%
+  group_by(Pf_infection) %>%
+  summarise(
+    ymin = min(raw_igGpos_iRBC / (raw_igGpos_iRBC + raw_igGneg_iRBC), na.rm = TRUE),
+    ymax = max(raw_igGpos_iRBC / (raw_igGpos_iRBC + raw_igGneg_iRBC), na.rm = TRUE),
+    ymed = median(raw_igGpos_iRBC / (raw_igGpos_iRBC + raw_igGneg_iRBC), na.rm = TRUE)
+  )
+
+p <- ggplot(df, aes(x = Pf_infection , y = raw_igGpos_iRBC / (raw_igGpos_iRBC + raw_igGneg_iRBC) )) +
+  
+  geom_jitter(aes(color = Pf_infection, fill = Pf_infection),
+              width = 0.15, size = 3.5, shape = 21, alpha = 0.9, stroke = 0.8) +
+  
+  geom_errorbar(data = summary_stats, aes(ymin = ymin, ymax = ymax, x = Pf_infection),
+                width = 0.2, color = "grey60", inherit.aes = FALSE) +
+  
+  geom_point(data = summary_stats, aes(y = ymed, x = Pf_infection),
+             shape = 95, size = 8, color = "black", inherit.aes = FALSE) +
+  
+  scale_fill_manual(values = fill_colors) +
+  scale_color_manual(values = outline_colors) + 
+  
+  # scale_y_continuous(limits = c(0, 30), breaks = seq(0, 30, 10), expand = expansion(mult = c(0.03, 0.03))) +
+  scale_y_continuous(
+    # limits = c(0, .15),
+    labels = label_percent()
+    ) +
+  
+  geom_hline(yintercept = 0, linetype = "dotted", color = "grey40") +
+  
+  theme_minimal(base_size = 15) +
+  theme(
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black"),
+    axis.text.y = element_text(color = "black", size = 14),  # Bigger Y-axis numbers
+    axis.text.x = element_text(color = "black", size = 14),  # Bigger X-axis category names
+    axis.title = element_text(color = "black", size = 16),   # Bigger axis titles
+    legend.position = "none"
+  ) +
+  
+  labs(x = "Pf infection status", y = "Total IgG+ Troph-iRBCs (% cells)")
+
+p
+
+ggsave(here("./figures/pf_infection_IgG.png"))
+```
+
+```{r}
+# Summary stats
+summary_stats <- df %>%
+  group_by(Pf_infection) %>%
+  summarise(
+    ymin = min(raw_igMpos_iRBC / (raw_igMpos_iRBC + raw_igMneg_iRBC), na.rm = TRUE),
+    ymax = max(raw_igMpos_iRBC / (raw_igMpos_iRBC + raw_igMneg_iRBC), na.rm = TRUE),
+    ymed = median(raw_igMpos_iRBC / (raw_igMpos_iRBC + raw_igMneg_iRBC), na.rm = TRUE)
+  )
+
+# Color palette
+fill_colors <- c("NO"="#FFDAB5",
+                 "YES" ="#7BAFD4")
+outline_colors <- c(
+  "NO"="#FF8C00",
+  "YES" ="#375D81")
+
+
+# Updated outline colors (darker tones)
+outline_colors <- c(
+  "NO"="#FF8C00",
+  "YES"= "#375D81"
+)
+
+
+p <- ggplot(df, aes(x = Pf_infection , y = raw_igMpos_iRBC / (raw_igMpos_iRBC + raw_igMneg_iRBC) )) +
+  
+  geom_jitter(aes(color = Pf_infection, fill = Pf_infection),
+              width = 0.15, size = 3.5, shape = 21, alpha = 0.9, stroke = 0.8) +
+  
+  geom_errorbar(data = summary_stats, aes(ymin = ymin, ymax = ymax, x = Pf_infection),
+                width = 0.2, color = "grey60", inherit.aes = FALSE) +
+  
+  geom_point(data = summary_stats, aes(y = ymed, x = Pf_infection),
+             shape = 95, size = 8, color = "black", inherit.aes = FALSE) +
+  
+  scale_fill_manual(values = fill_colors) +
+  scale_color_manual(values = outline_colors) +
+  
+  # scale_y_continuous(expand = expansion(mult = c(0.03, 0.03))) +
+  scale_y_continuous(
+    # limits = c(0, .15),
+    labels = label_percent()
+    ) +
+  
+  geom_hline(yintercept = 0, linetype = "dotted", color = "grey40") +
+  
+  theme_minimal(base_size = 15) +
+  theme(
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black"),
+    axis.text.y = element_text(color = "black", size = 14),  # Bigger Y-axis numbers
+    axis.text.x = element_text(color = "black", size = 14),  # Bigger X-axis category names
+    axis.title = element_text(color = "black", size = 16),   # Bigger axis titles
+    legend.position = "none"
+  ) +
+  
+  labs(x = "Pf infection status", y = "Total IgM+ Troph-iRBCs (% cells)")
+
+p
+
+ggsave(here("./figures/pf_infection_IgM.png"))
+```
+
+# Final models
+
+## IgG
+
+### IgG+ iRBC
+
+Proportion of IgG positive versus IgG negative infected red blood cells.
+
+A binomial GLM is not applicable because of violated model assumptions.
+
+```{r}
+model <- glm(
+  cbind(raw_igGpos_iRBC,
+        raw_igGneg_iRBC) ~ HBB.genotype,
+  family = binomial, data = df)
+
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+
+<!-- ### OLRE GLM -->
+
+<!-- Seems to work! -->
+
+<!-- ```{r} -->
+<!-- df$obs <- seq_len(nrow(df)) -->
+
+<!-- model <- glmer( -->
+<!--     cbind(raw_igGpos_iRBC, -->
+<!--         raw_igGneg_iRBC) ~ HBB.genotype + (1 | obs),  -->
+<!--   family = binomial, data = df) -->
+<!-- summary(model) -->
+
+<!-- # Simulate residuals -->
+<!-- sim_res <- simulateResiduals(model, n = 1000) -->
+<!-- plot(sim_res) -->
+
+<!-- # Test for overdispersion -->
+<!-- testDispersion(sim_res) -->
+
+<!-- # Test for zero-inflation -->
+<!-- testZeroInflation(sim_res) -->
+
+<!-- # plot residuals per group -->
+<!-- plotResiduals(sim_res, df$HBB.genotype) -->
+<!-- ``` -->
+
+The beta-binomial GLM was used as the final model. The data was modelled using generalized linear model using the beta-binomial family and a single dispersion parameter to account for overdispersion.
+
+```{r}
+model <- glmmTMB(
+    cbind(raw_igGpos_iRBC,
+          raw_igGneg_iRBC) ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+The estimated odds ratios (using Wald Z-tests) for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+
+# Perform all pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+CC = c(0,0,0,1,0)
+SC = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbCC / HbAA" = CC - AA,
+                            "HbSC / HbAA" = SC - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+The above table not only shows the estimated odds ratio and its corresponding p-value, but also the confidence interval of this odds ratio (= `asymp.LCL` and `asymp.UCL`).
+
+These p-values are adjusted for multiple testing using the Bonferroni method. 
+
+The estimates are already transformed from the log-scale, so they can be directly interpreted as odds ratios (OR).
+
+The estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+#### Bayesian estimates
+
+```{r cache=TRUE, collapse=TRUE, class.source = 'fold-hide'}
+brm_model <- brm(
+  bf(
+    raw_igGpos_iRBC | trials(raw_igGpos_iRBC + raw_igGneg_iRBC) ~ 
+      HBB.genotype
+  ), 
+  family = beta_binomial(link = "logit"),
+  data = df,
+  iter = 5000,
+  chains = 4,
+  # control = list(adapt_delta = 0.95),
+  seed = 42,
+  cores = 8
+)
+```
+
+```{r}
+summary(brm_model)
+```
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(brm_model, ~ HBB.genotype)
+
+# Perform all pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+CC = c(0,0,0,1,0)
+SC = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbCC / HbAA" = CC - AA,
+                            "HbSC / HbAA" = SC - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+### IgG+ asexual iRBC
+
+The binomial model was not applicable.
+
+```{r}
+model <- glm(
+  cbind(raw_igGpos_asexual,
+        raw_igGneg_asexual) ~ HBB.genotype,
+  family = binomial, data = df)
+
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+The beta-binomial GLM was used as the final model. The data was modelled using generalized linear model using the beta-binomial family and a single dispersion parameter to account for overdispersion.
+
+
+```{r}
+model <- glmmTMB(
+    cbind(raw_igGpos_asexual,
+          raw_igGneg_asexual) ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+
+The estimated odds ratios (using Wald Z-tests) for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+
+# Perform all pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+CC = c(0,0,0,1,0)
+SC = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbCC / HbAA" = CC - AA,
+                            "HbSC / HbAA" = SC - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+The above table not only shows the estimated odds ratio and its corresponding p-value, but also the confidence interval of this odds ratio (= `asymp.LCL` and `asymp.UCL`).
+
+These p-values are adjusted for multiple testing using the Bonferroni method. 
+
+The estimates are already transformed from the log-scale, so they can be directly interpreted as odds ratios (OR).
+
+The estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+#### Bayesian estimates
+
+```{r cache=TRUE, collapse=TRUE, class.source = 'fold-hide'}
+brm_model <- brm(
+  bf(
+    raw_igGpos_asexual | trials(raw_igGpos_asexual + raw_igGneg_asexual) ~ 
+      HBB.genotype
+  ), 
+  family = beta_binomial(link = "logit"),
+  data = df,
+  iter = 5000,
+  chains = 4,
+  # control = list(adapt_delta = 0.95),
+  seed = 42,
+  cores = 8
+)
+```
+
+```{r}
+summary(brm_model)
+```
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(brm_model, ~ HBB.genotype)
+
+# Perform all pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+CC = c(0,0,0,1,0)
+SC = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbCC / HbAA" = CC - AA,
+                            "HbSC / HbAA" = SC - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+### IgG+ sexual iRBC
+
+The binomial model was not applicable.
+
+```{r}
+model <- glm(
+  cbind(raw_igGpos_sexual,
+        raw_igGneg_sexual) ~ HBB.genotype,
+  family = binomial, data = df)
+
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+The beta-binomial GLM was used as the final model. The data was modelled using generalized linear model using the beta-binomial family and a single dispersion parameter to account for overdispersion.
+
+
+```{r}
+model <- glmmTMB(
+    cbind(raw_igGpos_sexual,
+          raw_igGneg_sexual) ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+The estimated odds ratios (using Wald Z-tests) for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+
+# Perform all pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+CC = c(0,0,0,1,0)
+SC = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbCC / HbAA" = CC - AA,
+                            "HbSC / HbAA" = SC - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+The above table not only shows the estimated odds ratio and its corresponding p-value, but also the confidence interval of this odds ratio (= `asymp.LCL` and `asymp.UCL`).
+
+These p-values are adjusted for multiple testing using the Bonferroni method. 
+
+The estimates are already transformed from the log-scale, so they can be directly interpreted as odds ratios (OR).
+
+The estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+#### Bayesian estimates
+
+```{r cache=TRUE, collapse=TRUE, class.source = 'fold-hide'}
+brm_model <- brm(
+  bf(
+    raw_igGpos_sexual | trials(raw_igGpos_sexual + raw_igGneg_sexual) ~ 
+      HBB.genotype
+  ), 
+  family = beta_binomial(link = "logit"),
+  data = df,
+  iter = 5000,
+  chains = 4,
+  # control = list(adapt_delta = 0.95),
+  seed = 42,
+  cores = 8
+)
+```
+
+```{r}
+summary(brm_model)
+```
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(brm_model, ~ HBB.genotype)
+
+# Perform all pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+CC = c(0,0,0,1,0)
+SC = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbCC / HbAA" = CC - AA,
+                            "HbSC / HbAA" = SC - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+## IgM
+
+### IgM+ iRBC
+
+Proportion of IgM positive versus IgM negative infected red blood cells.
+
+A binomial GLM is not applicable because of violated model assumptions.
+
+```{r}
+model <- glm(
+  cbind(raw_igMpos_iRBC,
+        raw_igMneg_iRBC) ~ HBB.genotype,
+  family = binomial, data = df)
+
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+The beta-binomial GLM was used as the final model. The data was modelled using generalized linear model using the beta-binomial family and a single dispersion parameter to account for overdispersion.
+
+```{r}
+model <- glmmTMB(
+    cbind(raw_igMpos_iRBC,
+          raw_igMneg_iRBC) ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+The estimated odds ratios (using Wald Z-tests) for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+
+# Perform all pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+CC = c(0,0,0,1,0)
+SC = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbCC / HbAA" = CC - AA,
+                            "HbSC / HbAA" = SC - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+The above table not only shows the estimated odds ratio and its corresponding p-value, but also the confidence interval of this odds ratio (= `asymp.LCL` and `asymp.UCL`).
+
+These p-values are adjusted for multiple testing using the Bonferroni method. 
+
+The estimates are already transformed from the log-scale, so they can be directly interpreted as odds ratios (OR).
+
+The estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+#### Bayesian estimates
+
+```{r cache=TRUE, collapse=TRUE, class.source = 'fold-hide'}
+brm_model <- brm(
+  bf(
+    raw_igMpos_iRBC | trials(raw_igMpos_iRBC + raw_igMneg_iRBC) ~ 
+      HBB.genotype
+  ), 
+  family = beta_binomial(link = "logit"),
+  data = df,
+  iter = 5000,
+  chains = 4,
+  # control = list(adapt_delta = 0.95),
+  seed = 42,
+  cores = 8
+)
+```
+
+```{r}
+summary(brm_model)
+```
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(brm_model, ~ HBB.genotype)
+
+# Perform all pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+CC = c(0,0,0,1,0)
+SC = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbCC / HbAA" = CC - AA,
+                            "HbSC / HbAA" = SC - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+### IgM+ asexual iRBC
+
+The binomial model was not applicable.
+
+```{r}
+model <- glm(
+  cbind(raw_igMpos_asexual,
+        raw_igMneg_asexual) ~ HBB.genotype,
+  family = binomial, data = df)
+
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+The beta-binomial GLM was used as the final model. The data was modelled using generalized linear model using the beta-binomial family and a single dispersion parameter to account for overdispersion.
+
+
+```{r}
+model <- glmmTMB(
+    cbind(raw_igMpos_asexual,
+          raw_igMneg_asexual) ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+The estimated odds ratios (using Wald Z-tests) for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+
+# Perform all pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+CC = c(0,0,0,1,0)
+SC = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbCC / HbAA" = CC - AA,
+                            "HbSC / HbAA" = SC - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+The above table not only shows the estimated odds ratio and its corresponding p-value, but also the confidence interval of this odds ratio (= `asymp.LCL` and `asymp.UCL`).
+
+These p-values are adjusted for multiple testing using the Bonferroni method. 
+
+The estimates are already transformed from the log-scale, so they can be directly interpreted as odds ratios (OR).
+
+The estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+#### Bayesian estimates
+
+```{r cache=TRUE, collapse=TRUE, class.source = 'fold-hide'}
+brm_model <- brm(
+  bf(
+    raw_igMpos_asexual | trials(raw_igMpos_asexual + raw_igMneg_asexual) ~ 
+      HBB.genotype
+  ), 
+  family = beta_binomial(link = "logit"),
+  data = df,
+  iter = 5000,
+  chains = 4,
+  # control = list(adapt_delta = 0.95),
+  seed = 42,
+  cores = 8
+)
+```
+
+```{r}
+summary(brm_model)
+```
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(brm_model, ~ HBB.genotype)
+
+# Perform all pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+CC = c(0,0,0,1,0)
+SC = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbCC / HbAA" = CC - AA,
+                            "HbSC / HbAA" = SC - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+### IgM+ sexual iRBC
+
+The binomial model was not applicable.
+
+```{r}
+model <- glm(
+  cbind(raw_igMpos_sexual,
+        raw_igMneg_sexual) ~ HBB.genotype,
+  family = binomial, data = df)
+
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+The beta-binomial GLM was used as the final model. The data was modelled using generalized linear model using the beta-binomial family and a single dispersion parameter to account for overdispersion.
+
+```{r}
+model <- glmmTMB(
+    cbind(raw_igMpos_sexual,
+          raw_igMneg_sexual) ~ HBB.genotype,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$HBB.genotype)
+```
+
+The estimated odds ratios (using Wald Z-tests) for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(model, ~ HBB.genotype)
+
+# Perform all pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+CC = c(0,0,0,1,0)
+SC = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbCC / HbAA" = CC - AA,
+                            "HbSC / HbAA" = SC - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+The above table not only shows the estimated odds ratio and its corresponding p-value, but also the confidence interval of this odds ratio (= `asymp.LCL` and `asymp.UCL`).
+
+These p-values are adjusted for multiple testing using the Bonferroni method. 
+
+The estimates are already transformed from the log-scale, so they can be directly interpreted as odds ratios (OR).
+
+The estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+#### Bayesian estimates
+
+```{r cache=TRUE, collapse=TRUE, class.source = 'fold-hide'}
+brm_model <- brm(
+  bf(
+    raw_igMpos_sexual | trials(raw_igMpos_sexual + raw_igMneg_sexual) ~ 
+      HBB.genotype
+  ), 
+  family = beta_binomial(link = "logit"),
+  data = df,
+  iter = 5000,
+  chains = 4,
+  # control = list(adapt_delta = 0.95),
+  seed = 42,
+  cores = 8
+)
+```
+
+```{r}
+summary(brm_model)
+```
+
+```{r}
+# Compute estimated marginal means for the HBB.genotype factor
+emm <- emmeans(brm_model, ~ HBB.genotype)
+
+# Perform all pairwise comparisons
+pairs(emm, adjust="tukey", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+
+# perform only comparisons against AA
+AA = c(1,0,0,0,0)
+AC = c(0,1,0,0,0)
+AS = c(0,0,1,0,0)
+CC = c(0,0,0,1,0)
+SC = c(0,0,0,0,1)
+
+contrast(emm, method = list("HbAC / HbAA" = AC - AA,
+                            "HbAS / HbAA" = AS - AA,
+                            "HbCC / HbAA" = CC - AA,
+                            "HbSC / HbAA" = SC - AA),
+         adjust = "bonferroni",
+         type="response",
+         infer = c(TRUE, TRUE)
+         )
+```
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+## Pf infection
+
+### IgG+
+
+Proportion of IgG positive versus IgG negative infected red blood cells for active vs non-active infections:
+
+A binomial GLM is not applicable because of violated model assumptions.
+
+```{r}
+model <- glm(
+  cbind(raw_igGpos_iRBC,
+        raw_igGneg_iRBC) ~ Pf_infection,
+  family = binomial, data = df)
+
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$Pf_infection)
+```
+
+The beta-binomial GLM was used as the final model. The data was modelled using generalized linear model using the beta-binomial family and a single dispersion parameter to account for overdispersion.
+
+```{r}
+model <- glmmTMB(
+  cbind(raw_igGpos_iRBC,
+        raw_igGneg_iRBC) ~ Pf_infection,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$Pf_infection)
+
+```
+
+The estimated odds ratios (using Wald Z-tests) for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the Pf_infection factor
+emm <- emmeans(model, ~ Pf_infection)
+
+# Perform all pairwise comparisons
+pairs(emm, adjust="bonferroni", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+```
+
+The above table not only shows the estimated odds ratio and its corresponding p-value, but also the confidence interval of this odds ratio (= `asymp.LCL` and `asymp.UCL`).
+
+These p-values are adjusted for multiple testing using the Bonferroni method. 
+
+The estimates are already transformed from the log-scale, so they can be directly interpreted as odds ratios (OR).
+
+The estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+#### Bayesian estimates
+
+```{r cache=TRUE, collapse=TRUE, class.source = 'fold-hide'}
+brm_model <- brm(
+  bf(
+    raw_igGpos_iRBC | trials(raw_igGpos_iRBC + raw_igGneg_iRBC) ~ 
+      Pf_infection
+  ), 
+  family = beta_binomial(link = "logit"),
+  data = df,
+  iter = 5000,
+  chains = 4,
+  # control = list(adapt_delta = 0.95),
+  seed = 42,
+  cores = 8
+)
+```
+
+```{r}
+summary(brm_model)
+```
+
+```{r}
+# Compute estimated marginal means for the Pf_infection factor
+emm <- emmeans(brm_model, ~ Pf_infection)
+
+# Perform all pairwise comparisons
+pairs(emm, adjust="bonferroni", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+```
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+#### Model comparison
+
+```{r}
+model <- glmmTMB(
+  cbind(raw_igGpos_iRBC,
+        raw_igGneg_iRBC) ~ Pf_infection,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+model_extended <- glmmTMB(
+  cbind(raw_igGpos_iRBC,
+        raw_igGneg_iRBC) ~ Pf_infection + Gender + Village + Age_group,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+anova(model, model_extended)
+```
+
+A more complex model is not preferred. Moreover, the directionality and magnitude of the effect remains consistent.
+
+```{r}
+summary(model_extended)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model_extended, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$Pf_infection)
+```
+
+### IgM+
+
+Proportion of IgM positive versus IgM negative infected red blood cells for active vs non-active infections:
+
+A binomial GLM is not applicable because of violated model assumptions.
+
+```{r}
+model <- glm(
+  cbind(raw_igMpos_iRBC,
+        raw_igMneg_iRBC) ~ Pf_infection,
+  family = binomial, data = df)
+
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$Pf_infection)
+```
+
+The beta-binomial GLM was used as the final model. The data was modelled using generalized linear model using the beta-binomial family and a single dispersion parameter to account for overdispersion.
+
+```{r}
+model <- glmmTMB(
+  cbind(raw_igMpos_iRBC,
+        raw_igMneg_iRBC) ~ Pf_infection,
+  family = betabinomial(link = "logit"),
+  data = df
+)
+summary(model)
+
+# Simulate residuals
+sim_res <- simulateResiduals(model, n = 1000)
+plot(sim_res)
+
+# Test for overdispersion
+testDispersion(sim_res)
+
+# Test for zero-inflation
+testZeroInflation(sim_res)
+
+# plot residuals per group
+plotResiduals(sim_res, df$Pf_infection)
+```
+
+The estimated odds ratios (using Wald Z-tests) for the different genotype contrasts are as follows:
+
+```{r}
+# Compute estimated marginal means for the Pf_infection factor
+emm <- emmeans(model, ~ Pf_infection)
+
+# Perform all pairwise comparisons
+pairs(emm, adjust="bonferroni", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+```
+
+The above table not only shows the estimated odds ratio and its corresponding p-value, but also the confidence interval of this odds ratio (= `asymp.LCL` and `asymp.UCL`).
+
+These p-values are adjusted for multiple testing using the Bonferroni method. 
+
+The estimates are already transformed from the log-scale, so they can be directly interpreted as odds ratios (OR).
+
+The estimated SCR per group is, adjusted for multiple testing using the Bonferroni method:
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+#### Bayesian estimates
+
+```{r cache=TRUE, collapse=TRUE, class.source = 'fold-hide'}
+brm_model <- brm(
+  bf(
+    raw_igMpos_iRBC | trials(raw_igMpos_iRBC + raw_igMneg_iRBC) ~ 
+      Pf_infection
+  ), 
+  family = beta_binomial(link = "logit"),
+  data = df,
+  iter = 5000,
+  chains = 4,
+  # control = list(adapt_delta = 0.95),
+  seed = 42,
+  cores = 8
+)
+```
+
+```{r}
+summary(brm_model)
+```
+
+```{r}
+# Compute estimated marginal means for the Pf_infection factor
+emm <- emmeans(brm_model, ~ Pf_infection)
+
+# Perform all pairwise comparisons
+pairs(emm, adjust="bonferroni", ratios=T, type="response", reverse=T, infer = c(TRUE, TRUE))
+```
+
+```{r}
+confint(emm, type="response", adjust="bonferroni")
+```
+
+# Software used
+
+```{r}
+grateful::cite_packages(output = "table", out.dir = here(), cite.tidyverse = TRUE)
+```
