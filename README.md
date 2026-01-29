@@ -1,4 +1,4 @@
-[zenodo-doi]()  [![Data License: CC BY 4.0](https://img.shields.io/badge/License-CC_BY_4.0-lightgrey.svg)](https://creativecommons.org/licenses/by/4.0/)  [![Code License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[zenodo-doi]()  [![Data License: CC BY 4.0](https://img.shields.io/badge/License-CC_BY_4.0-blue.svg)](https://creativecommons.org/licenses/by/4.0/)  [![Code License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 # Data and analysis scripts for manuscript "Elevated Plasmodium falciparum sexual conversion in HbAC and HbAS red blood cells in naturally infected malaria patients"
 
@@ -8,13 +8,17 @@ Both code and dataset are archived in a single DOI at Zenodo: DOI:10.xxx/zenodo.
 
 ## License
 
-All datasets stored in the `./data` directory are licensed under <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a><img src="https://mirrors.creativecommons.org/presskit/icons/cc.svg" alt="" style="max-width: 1em;max-height:1em;margin-left: .2em;"><img src="https://mirrors.creativecommons.org/presskit/icons/by.svg" alt="" style="max-width: 1em;max-height:1em;margin-left: .2em;">
+All datasets stored in the `./data` directory are licensed under [CC BY 4.0](./LICENSE_DATA.md).
 
-All scripts stored in the `./notebooks` directory are licensed under MIT.
+All scripts stored in the `./notebooks` directory are licensed under [MIT](./LICENSE_CODE.md).
 
 ## Citation
 
-The paper associated with these datasets and scripts can be found here: <in submission>.
+The paper associated with these datasets and scripts can be found here: \<in submission\>.
+
+## Running the R Markdown notebooks
+
+Renv was used to track the utilised R packages. You can recreate the environment by opening the R project file in the root directory (`scr.Rproj`), installing `renv`, and then running `renv::restore()`. For more info on how to recreate an renv environment, check the [renv documentation](https://rstudio.github.io/renv/articles/renv.html#getting-started).
 
 ## R packages used
 
