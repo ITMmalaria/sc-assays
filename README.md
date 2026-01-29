@@ -8,9 +8,9 @@ Both code and dataset are archived in a single DOI at Zenodo: DOI:10.xxx/zenodo.
 
 ## License
 
-All datasets stored in the `./data` directory are licensed under <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a><img src="https://mirrors.creativecommons.org/presskit/icons/cc.svg" alt="" style="max-width: 1em;max-height:1em;margin-left: .2em;"><img src="https://mirrors.creativecommons.org/presskit/icons/by.svg" alt="" style="max-width: 1em;max-height:1em;margin-left: .2em;">
+All datasets stored in the `./data` directory are licensed under [CC BY 4.0](./LICENSE_DATA.md).
 
-All scripts stored in the `./notebooks` directory are licensed under MIT.
+All scripts stored in the `./notebooks` directory are licensed under [MIT](./LICENSE_CODE.md).
 
 ## Citation
 
