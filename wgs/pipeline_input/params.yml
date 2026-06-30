@@ -1,0 +1,87 @@
+input: "/scratch/antwerpen/203/vsc20380/InHost/data/samplesheet.csv"
+outdir: "/scratch/antwerpen/203/vsc20380/InHost/results/"
+
+# reference
+reference_fasta: "/scratch/antwerpen/203/vsc20380/summit-2026/data/ref/Pfalciparum/3D7/PlasmoDB/PlasmoDB-release-68/PlasmoDB-68_Pfalciparum3D7_Genome.fasta"
+save_index: true
+reference_annotation: "/scratch/antwerpen/203/vsc20380/summit-2026/data/ref/Pfalciparum/3D7/PlasmoDB/PlasmoDB-release-68/PlasmoDB-68_Pfalciparum3D7.gff"
+reference_cds: "/scratch/antwerpen/203/vsc20380/summit-2026/data/ref/Pfalciparum/3D7/PlasmoDB/PlasmoDB-release-68/PlasmoDB-68_Pfalciparum3D7_AnnotatedCDSs.fasta"
+
+# gatk scatter options
+save_interval_scatter: true
+scatter_count: 12
+
+# hostremoval options
+trimming_before_hostremoval: false
+hostremoval_method: deacon
+hostremoval_deacon_index: "/data/antwerpen/grp/ap_itg_mu/public_data/reference_genomes/hostremoval/deacon/deacon-index/k31w15-mito/union/k31w15.union-panhuman.idx"
+hostremoval_deacon_diff: true
+hostremoval_save_index: false
+hostremoval_save_filtered: false
+
+# fastqscreen options
+# fastqscreen_fastas: "/data/antwerpen/grp/ap_itg_mu/public_data/reference_genomes/Pfalciparum/3D7/PlasmoDB/PlasmoDB-release-68/PlasmoDB-68_Pfalciparum3D7_Genome.fasta,/data/antwerpen/grp/ap_itg_mu/public_data/reference_genomes/human/GRCh38.p14/GENCODE/49/GRCh38.primary_assembly.genome.fa.gz,/data/antwerpen/grp/ap_itg_mu/public_data/reference_genomes/Pvivax/P01/PlasmoDB/PlasmoDB-release-68/PlasmoDB-68_PvivaxP01_Genome.fasta,/data/antwerpen/grp/ap_itg_mu/public_data/reference_genomes/Pmalariae/UG01/PlasmoDB/PlasmoDB-release-68/PlasmoDB-68_PmalariaeUG01_Genome.fasta,/data/antwerpen/grp/ap_itg_mu/public_data/reference_genomes/Povale/curtisi/PocGH01/PlasmoDB/PlasmoDB-release-68/PlasmoDB-68_PovalecurtisiGH01_Genome.fasta,/data/antwerpen/grp/ap_itg_mu/public_data/reference_genomes/Povale/wallikeri/PowCR01/PlasmoDB-release-68/PlasmoDB-68_PovalewallikeriPowCR01_Genome.fasta"
+# fastqscreen_save_index: true
+fastqscreen_index_dir: "/scratch/antwerpen/203/vsc20380/summit-2026/data/ref/FastQ_Screen_Genomes"
+
+# trim options
+fastp_save_trimmed: false
+fastp_save_merged: false
+fastp_save_trimmed_fail: false
+
+# bwa options
+sort_fastq: false
+
+# bam and vcf options
+save_bam_initial: false
+save_bam: true
+save_bqsr_bam: false
+save_gvcf: true
+save_intermediate_vcf: true
+save_genomicsdb: false
+save_snpeff_db: false
+
+# skip options
+# skip_qc: false
+# skip_trimming: false
+# skip_fastqscreen: false
+# skip_hostremoval: false
+# skip_alignment: true
+# skip_variantcalling: true
+# skip_annotation: true
+# only_index_reference: false
+# only_hostremoval: true
+# only_fastqscreen: false
+
+# BQSR
+run_bqsr: true
+bqsr_known_sites_vcf: "/scratch/antwerpen/203/vsc20380/malariagen-data-scripts/Pf8/filters/filter-PASS-sites-only-zarr/Pf8_PASS_sites_only_info_optimized.vcf.gz"
+bqsr_known_sites_tbi: "/scratch/antwerpen/203/vsc20380/malariagen-data-scripts/Pf8/filters/filter-PASS-sites-only-zarr/Pf8_PASS_sites_only_info_optimized.vcf.gz.tbi"
+
+vcf_filter_mode: 'vqsr'
+vqsr_snp_resource_vcfs: [
+    '/scratch/antwerpen/203/vsc20380/malariagen-data-scripts/pf-crosses-1.0/7g8_gb4.combined.final.vcf.gz',
+    '/scratch/antwerpen/203/vsc20380/malariagen-data-scripts/pf-crosses-1.0/hb3_dd2.combined.final.vcf.gz',
+    '/scratch/antwerpen/203/vsc20380/malariagen-data-scripts/pf-crosses-1.0/3d7_hb3.combined.final.vcf.gz',
+    '/scratch/antwerpen/203/vsc20380/malariagen-data-scripts/Pf8/filters/filter-PASS-sites-only-zarr/Pf8_PASS_sites_only_info_optimized.vcf.gz'
+    ]
+vqsr_snp_resource_labels: [
+  '--resource:7g8_gb4,known=false,training=true,truth=true,prior=15.0',
+  '--resource:hb3_dd2,known=false,training=true,truth=true,prior=15.0',
+  '--resource:3d7_hb3,known=false,training=true,truth=true,prior=15.0',
+  '--resource:pf8_pass,known=true,training=false,truth=false,prior=2.0',
+  ]
+vqsr_indel_resource_vcfs: [
+    '/scratch/antwerpen/203/vsc20380/malariagen-data-scripts/pf-crosses-1.0/7g8_gb4.combined.final.vcf.gz',
+    '/scratch/antwerpen/203/vsc20380/malariagen-data-scripts/pf-crosses-1.0/hb3_dd2.combined.final.vcf.gz',
+    '/scratch/antwerpen/203/vsc20380/malariagen-data-scripts/pf-crosses-1.0/3d7_hb3.combined.final.vcf.gz',
+    '/scratch/antwerpen/203/vsc20380/malariagen-data-scripts/Pf8/filters/filter-PASS-sites-only-zarr/Pf8_PASS_sites_only_info_optimized.vcf.gz'
+    ]
+vqsr_indel_resource_labels: [
+  '--resource:7g8_gb4,known=false,training=true,truth=true,prior=15.0',
+  '--resource:hb3_dd2,known=false,training=true,truth=true,prior=15.0',
+  '--resource:3d7_hb3,known=false,training=true,truth=true,prior=15.0',
+  '--resource:pf8_pass,known=true,training=false,truth=false,prior=2.0',
+]
+vqsr_snp_annotations: '-an QD -an FS -an SOR -an MQRankSum -an ReadPosRankSum'
+vqsr_indel_annotations: '-an QD -an FS -an SOR -an MQRankSum -an ReadPosRankSum'
