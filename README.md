@@ -1,10 +1,14 @@
-[zenodo-doi]()  [![Data License: CC BY 4.0](https://img.shields.io/badge/License-CC_BY_4.0-lightgrey.svg)](https://creativecommons.org/licenses/by/4.0/)  [![Code License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![DOI](https://zenodo.org/badge/1145199903.svg)](https://doi.org/10.5281/zenodo.18419143)  [![Data License: CC BY 4.0](https://img.shields.io/badge/License-CC_BY_4.0-blue.svg)](https://creativecommons.org/licenses/by/4.0/)  [![Code License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 # Data and analysis scripts for manuscript "Elevated Plasmodium falciparum sexual conversion in HbAC and HbAS red blood cells in naturally infected malaria patients"
 
 This repository holds the pseudonymized dataset (`./data`) and R Markdown reports (`./notebooks`) used for the manuscript "Elevated Plasmodium falciparum sexual conversion in HbAC and HbAS red blood cells in naturally infected malaria patients" (_in submission_).
 
-Both code and dataset are archived in a single DOI at Zenodo: DOI:10.xxx/zenodo.zzzzz.
+Both code and dataset are archived in a single DOI at Zenodo: [DOI:10.5281/zenodo.18419143](https://doi.org/10.5281/zenodo.18419143).
+
+## Running the R Markdown notebooks
+
+Renv was used to track the utilised R packages. You can recreate the environment by opening the R project file in the root directory (`scr.Rproj`), installing `renv`, and then running `renv::restore()`. For more info on how to recreate an renv environment, check the [renv documentation](https://rstudio.github.io/renv/articles/renv.html#getting-started).
 
 ## License
 
@@ -14,7 +18,7 @@ All scripts stored in the `./notebooks` directory are licensed under [MIT](./LIC
 
 ## Citation
 
-The paper associated with these datasets and scripts can be found here: <in submission>.
+The paper associated with these datasets and scripts can be found here: \<in submission\>.
 
 ## R packages used
 
@@ -202,4 +206,3 @@ Definitive Guide*. Boca Raton, Florida: Chapman; Hall/CRC.
 Xie, Yihui, Christophe Dervieux, and Emily Riederer. 2020. *R Markdown
 Cookbook*. Boca Raton, Florida: Chapman; Hall/CRC.
 <https://bookdown.org/yihui/rmarkdown-cookbook>.
-
